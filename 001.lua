@@ -1,4 +1,4 @@
--- Blox Fruits
+-- Blox Fruit
 local function geniter(f, s, c)
 	if type(f) ~= "function" then
 		local mt = getmetatable(f)
@@ -1181,6 +1181,66 @@ Hop = function()
 	end)
 end
 
+-- Track and restore character collisions around automation movement.
+-- HumanoidRootPart must remain non-collidable; forcing every part to CanCollide=true
+-- when automation stops can interfere with regular player movement.
+local VeloxHubCollisionStates = setmetatable({}, { __mode = "k" })
+
+local function VeloxHubSetCharacterNoCollision(character)
+    if not character then
+        return
+    end
+
+    local states = VeloxHubCollisionStates[character]
+    if not states then
+        states = {}
+        VeloxHubCollisionStates[character] = states
+        for _, descendant in ipairs(character:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                states[descendant] = descendant.CanCollide
+            end
+        end
+    end
+
+    for _, descendant in ipairs(character:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            descendant.CanCollide = false
+        end
+    end
+end
+
+local function VeloxHubRestoreCharacterCollision(character)
+    if not character then
+        return
+    end
+
+    local states = VeloxHubCollisionStates[character]
+    if states then
+        for part, canCollide in pairs(states) do
+            if part and part.Parent and part:IsDescendantOf(character) then
+                part.CanCollide = canCollide
+            end
+        end
+        VeloxHubCollisionStates[character] = nil
+    end
+
+    -- Recovery for parts modified by a previous script execution, before their
+    -- original collision states could be cached in this execution.
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if humanoidRootPart and humanoidRootPart:IsA("BasePart") then
+        humanoidRootPart.CanCollide = false
+    end
+
+    for _, descendant in ipairs(character:GetDescendants()) do
+        if descendant:IsA("BasePart") then
+            local parent = descendant.Parent
+            if parent and (parent:IsA("Accessory") or parent:IsA("Tool")) then
+                descendant.CanCollide = false
+            end
+        end
+    end
+end
+
 -- Restore player control on a fresh VeloxHub execution.
 -- The movement guard below creates a zero-velocity BodyClip when automation flags are active.
 -- Clear stale global flags first so an older execution cannot leave the player locked in place.
@@ -1230,7 +1290,9 @@ do
     senth = false
     senth2 = false
     getgenv().AutoMaterial = false
+    getgenv().OnFarm = false
     shouldTween = false
+    _G.WasOnFarm = false
 
     local function restoreLocalMovement(character)
         if not character then
@@ -1256,6 +1318,9 @@ do
             if root.Anchored then
                 root.Anchored = false
             end
+
+            VeloxHubRestoreCharacterCollision(character)
+            root.CanCollide = false
 
             local wasPlatformStand = humanoid.PlatformStand
             if wasPlatformStand then
@@ -1368,26 +1433,11 @@ do
 					end
 
 					local Character = LocalPlayer.Character
-
-					if Character then
-						for _, child in pairs(Character:GetChildren()) do
-							if child:IsA("BasePart") then
-								child.CanCollide = false
-							end
-						end
-					end
+					VeloxHubSetCharacterNoCollision(Character)
 				elseif _G.WasOnFarm then
 					_G.WasOnFarm = false
-
 					local Character = LocalPlayer.Character
-
-					if Character then
-						for _, child in pairs(Character:GetChildren()) do
-							if child:IsA("BasePart") then
-								child.CanCollide = true
-							end
-						end
-					end
+					VeloxHubRestoreCharacterCollision(Character)
 				end
 			end)
 		end
@@ -1923,20 +1973,22 @@ do
 						Highlight.Parent = plr.Character
 					end
 
-					for _, descendant in pairs(plr.Character:GetDescendants()) do
-						if descendant:IsA("BasePart") then
-							descendant.CanCollide = false
-						end
-					end
+					VeloxHubSetCharacterNoCollision(plr.Character)
 				else
 					shouldTween = false
+					VeloxHubRestoreCharacterCollision(plr.Character)
 
-					if plr.Character.HumanoidRootPart:FindFirstChild("BodyClip") then
-						plr.Character.HumanoidRootPart:FindFirstChild("BodyClip"):Destroy()
+					local Character = plr.Character
+					local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+					if HumanoidRootPart then
+						local BodyClip = HumanoidRootPart:FindFirstChild("BodyClip")
+						if BodyClip then
+							BodyClip:Destroy()
+						end
 					end
 
-					if plr.Character:FindFirstChild("highlight") then
-						plr.Character:FindFirstChild("highlight"):Destroy()
+					if Character and Character:FindFirstChild("highlight") then
+						Character:FindFirstChild("highlight"):Destroy()
 					end
 				end
 			end)
