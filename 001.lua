@@ -1181,6 +1181,119 @@ Hop = function()
 	end)
 end
 
+local VeloxHubMovementAutomationFlags = {
+        "AcientOne", "Addealer", "AuraBoss", "AutoAttackDoughKing", "AutoAttackRipIndra",
+        "AutoBerry", "AutoBerryH", "AutoBigmom", "AutoChestBP", "AutoColShad",
+        "AutoDeathStep", "AutoDoughKing", "AutoDragonTalon", "AutoEcBoss", "AutoEctoplasm",
+        "AutoEvoRace", "AutoFMon", "AutoFactory", "AutoFarmAllBoss", "AutoFarmCandy",
+        "AutoFarmChest", "AutoFarmDungeon", "AutoFarmGodChalice", "AutoFarmIsland", "AutoFarmNear",
+        "AutoFarmRaid", "AutoFarm_Bone", "AutoFireFlowers", "AutoFishSlap", "AutoFistDarkness",
+        "AutoGetQuestBounty", "AutoGetUsoap", "AutoHolyTorch", "AutoHop_Dough", "AutoHytHallow",
+        "AutoKenVTWO", "AutoKillMob", "AutoKilo", "AutoLawKak", "AutoMagnetToken",
+        "AutoMatSoul", "AutoMiror", "AutoMysticIsland", "AutoPhoenixF", "AutoPlayerHunter",
+        "AutoPole", "AutoPoleV2", "AutoRaidCastle", "AutoRipIngay", "AutoSaber",
+        "AutoSaw", "AutoSerpentBow", "AutoSpawnCP", "AutoStartPrehistoric", "AutoTPAndCollect",
+        "AutoTPGift", "AutoTP_Gift", "AutoTridentW2", "AutoUnHaki", "AutoZou",
+        "Auto_Cake_Prince", "Auto_Cavender", "Auto_Def_DarkCoat", "Auto_DonAcces", "Auto_Electric_Claw",
+        "Auto_Fish", "Auto_God_Human", "Auto_Human", "Auto_Mink", "Auto_Rainbow_Haki",
+        "Auto_SharkMan_Karate", "Auto_Skypiea", "Auto_Soul_Guitar", "Auto_StartRaid", "Auto_SuperHuman",
+        "Auto_SwanGG", "Auto_Tushita", "Auto_Yama", "AutofindKitIs", "Bartilo_Quest",
+        "BlackSpikey", "BuyDrago", "CDK", "CDK_TS", "CDK_YM",
+        "CitizenQuest", "CollectPresent", "Collect_Ember", "Complete_Trials", "CraftVM",
+        "DT_Uzoth", "DangerLV", "DarkBladev3", "Defeating", "Dojoo",
+        "Doughv2", "DragoV1", "DragoV3", "DummyMan", "FarmBlazeEM",
+        "FarmBoss", "FarmChestM", "FarmEliteHop", "FarmEliteHunt", "FarmGodChalice",
+        "FarmMastery_Dev", "FarmMastery_G", "FarmMastery_S", "FarmPhaBinh", "FarmTyrant",
+        "FindMirage", "FishBoat", "FrozenTP", "HCM", "HighestMirage",
+        "IceBossRen", "KeysRen", "Level", "Leviathan1", "LongsWord",
+        "Lvthan", "MarinesCoat", "MasterAutoCandy", "MasterAutoLevel", "MobCrew",
+        "PGB", "Piranha", "Praying", "Prefully", "Prehis_DB",
+        "Prehis_DE", "Prehis_Find", "Prehis_Skills", "Raiding", "Relic123",
+        "SafeMode", "SailBoat_Hydra", "SailBoats", "SeaBeast1", "Shark",
+        "StartEvent", "SwanCoat", "TPDoor", "TPFloor1", "TPFloor2",
+        "TPFloor3", "TPFloor4", "TPGEAR", "TPNpc", "Teleport",
+        "TerrorShark", "TpDrago_Prehis", "TpLab", "TpPly", "Tp_LgS",
+        "Tp_MasterA", "TrainDrago", "TravelDres", "TryLucky", "TwFruits",
+        "TwinHook", "UPGDrago", "WardenBoss", "beasthunter", "obsFarm",
+        "snaguine", "tweenKitShrine", "tweenKitsune", "tweenShrine",
+    }
+
+-- Clear automation flags left by earlier executions and release leftover movement forces.
+-- This deliberately leaves normal character collision defaults alone, matching the source script.
+local function VeloxHubReleaseMovementLocks(character)
+    if not character then
+        return
+    end
+
+    task.spawn(function()
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+            or character:WaitForChild("Humanoid", 10)
+        local root = character:FindFirstChild("HumanoidRootPart")
+            or character:WaitForChild("HumanoidRootPart", 10)
+
+        if not character.Parent then
+            return
+        end
+
+        if root then
+            root.Anchored = false
+            local bodyClip = root:FindFirstChild("BodyClip")
+            if bodyClip then
+                bodyClip:Destroy()
+            end
+        end
+
+        -- Clear leftover fly/clip movers from a prior script run only.
+        for _, object in ipairs(character:GetDescendants()) do
+            if object:IsA("BodyVelocity") and (object.Name == "BodyClip" or object.Name == "BodyVelocity") then
+                object:Destroy()
+            elseif object:IsA("BodyGyro") and object.Name == "BodyGyro" then
+                object:Destroy()
+            end
+        end
+
+        if humanoid then
+            humanoid.PlatformStand = false
+            humanoid.AutoRotate = true
+            if humanoid.WalkSpeed <= 0 then
+                humanoid.WalkSpeed = 16
+            end
+            if humanoid.UseJumpPower then
+                if humanoid.JumpPower <= 0 then
+                    humanoid.JumpPower = 50
+                end
+            elseif humanoid.JumpHeight <= 0 then
+                humanoid.JumpHeight = 7.2
+            end
+        end
+    end)
+end
+
+do
+    for _, flagName in ipairs(VeloxHubMovementAutomationFlags) do
+        _G[flagName] = false
+    end
+    _G.Level = false
+    _G.WasOnFarm = false
+    NextIs = false
+    senth = false
+    senth2 = false
+    getgenv().AutoMaterial = false
+    getgenv().OnFarm = false
+    shouldTween = false
+
+    if plr.Character then
+        VeloxHubReleaseMovementLocks(plr.Character)
+    end
+    plr.CharacterAdded:Connect(function(character)
+        task.delay(0.35, function()
+            if plr.Character == character then
+                VeloxHubReleaseMovementLocks(character)
+            end
+        end)
+    end)
+end
+
 local Part = Instance.new("Part", workspace)
 
 Part.Size = Vector3.new(1, 1, 1)
@@ -1250,26 +1363,23 @@ do
 					end
 
 					local Character = LocalPlayer.Character
-
 					if Character then
-						for _, child in pairs(Character:GetChildren()) do
-							if child:IsA("BasePart") then
-								child.CanCollide = false
-							end
-						end
-					end
+                        for _, child in pairs(Character:GetChildren()) do
+                            if child:IsA("BasePart") then
+                                child.CanCollide = false
+                            end
+                        end
+                    end
 				elseif _G.WasOnFarm then
 					_G.WasOnFarm = false
-
 					local Character = LocalPlayer.Character
-
 					if Character then
-						for _, child in pairs(Character:GetChildren()) do
-							if child:IsA("BasePart") then
-								child.CanCollide = true
-							end
-						end
-					end
+                        for _, child in pairs(Character:GetChildren()) do
+                            if child:IsA("BasePart") then
+                                child.CanCollide = true
+                            end
+                        end
+                    end
 				end
 			end)
 		end
@@ -1806,19 +1916,25 @@ do
 					end
 
 					for _, descendant in pairs(plr.Character:GetDescendants()) do
-						if descendant:IsA("BasePart") then
-							descendant.CanCollide = false
-						end
-					end
+                        if descendant:IsA("BasePart") then
+                            descendant.CanCollide = false
+                        end
+                    end
 				else
 					shouldTween = false
+					
 
-					if plr.Character.HumanoidRootPart:FindFirstChild("BodyClip") then
-						plr.Character.HumanoidRootPart:FindFirstChild("BodyClip"):Destroy()
+					local Character = plr.Character
+					local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+					if HumanoidRootPart then
+						local BodyClip = HumanoidRootPart:FindFirstChild("BodyClip")
+						if BodyClip then
+							BodyClip:Destroy()
+						end
 					end
 
-					if plr.Character:FindFirstChild("highlight") then
-						plr.Character:FindFirstChild("highlight"):Destroy()
+					if Character and Character:FindFirstChild("highlight") then
+						Character:FindFirstChild("highlight"):Destroy()
 					end
 				end
 			end)
@@ -2281,27 +2397,39 @@ local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/rel
 local Window = WindUI:CreateWindow({
     Title = "Blox Fruits",
     Author = "by Ovei",
-    Icon = "zap",
-    Folder = "VeloxHub",
-    Size = UDim2.fromOffset(580, 460),
-    MinSize = Vector2.new(360, 300),
-    MaxSize = Vector2.new(960, 720),
+    Icon = "swords",
+    Folder = "BloxFruitsOvei",
+    Size = UDim2.fromOffset(420, 320),
+    MinSize = Vector2.new(300, 230),
+    MaxSize = Vector2.new(640, 460),
     ToggleKey = Enum.KeyCode.RightControl,
     Theme = "Dark",
     Resizable = true,
     AutoScale = true,
-    HideSearchBar = false,
+    SideBarWidth = 145,
+    HideSearchBar = true,
     ScrollBarEnabled = false,
     Acrylic = false,
     OpenButton = {
         Title = "Open Blox Fruits",
-        Icon = "zap",
+        Icon = "swords",
         Enabled = true,
         Draggable = true,
         OnlyMobile = true,
         Scale = 0.65,
     },
 })
+
+-- Keep the UI compact on touch devices so it is less likely to cover the left movement joystick.
+local VeloxHubUserInputService = game:GetService("UserInputService")
+if VeloxHubUserInputService.TouchEnabled then
+    pcall(function()
+        Window:SetUIScale(0.78)
+    end)
+end
+pcall(function()
+    WindUI:SetNotificationLower(true)
+end)
 
 local WindTabs = {
     Overview = Window:Tab({
@@ -2345,6 +2473,38 @@ local WindTabs = {
         Icon = "settings",
     }),
 }
+
+WindTabs.Settings:Button({
+    Title = "Restore Player Movement",
+    Desc = "Player Movement: clears leftover forces and restores normal walking and jumping.",
+    Icon = "person-standing",
+    Callback = function()
+        -- Disable the shared movement/teleport automation flags before recovering control.
+        for _, flagName in ipairs(VeloxHubMovementAutomationFlags) do
+            _G[flagName] = false
+        end
+        _G.Level = false
+        _G.WasOnFarm = false
+        shouldTween = false
+        NextIs = false
+        senth = false
+        senth2 = false
+        getgenv().AutoMaterial = false
+        getgenv().OnFarm = false
+
+        local character = plr.Character
+        if not character then
+            return
+        end
+        VeloxHubReleaseMovementLocks(character)
+        WindUI:Notify({
+            Title = "Blox Fruits",
+            Content = "Player movement reset.",
+            Icon = "check-circle",
+            Duration = 3,
+        })
+    end,
+})
 
 local TabRoutes = {
     ["Info And Status"] = "Overview",
@@ -2514,9 +2674,11 @@ local function makeGroupbox(windTab, rawTitle)
             Locked = options.Locked == true,
             Callback = type(callback) == "function" and callback or function() end,
         })
-        if defaultValue and type(callback) == "function" then
+        -- The source Banana UI invokes toggle callbacks for every explicit default,
+        -- including false. Mirror that behavior so disabled features reset their globals.
+        if options.Default ~= nil and type(callback) == "function" then
             task.defer(function()
-                pcall(callback, true)
+                pcall(callback, defaultValue)
             end)
         end
         return control
@@ -31876,7 +32038,7 @@ end
 
 WindUI:Notify({
 	Title = "Blox Fruits",
-	Content = "Blox Fruit Loaded",
+	Content = "Blox Fruits Loaded",
 	Icon = "check-circle",
 	Duration = 5
 })
