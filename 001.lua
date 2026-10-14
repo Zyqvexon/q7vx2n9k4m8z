@@ -1,4 +1,4 @@
--- Blox Fruit
+-- Blox Fruits
 local function geniter(f, s, c)
 	if type(f) ~= "function" then
 		local mt = getmetatable(f)
@@ -1181,189 +1181,6 @@ Hop = function()
 	end)
 end
 
--- Track and restore character collisions around automation movement.
--- HumanoidRootPart must remain non-collidable; forcing every part to CanCollide=true
--- when automation stops can interfere with regular player movement.
-local VeloxHubCollisionStates = setmetatable({}, { __mode = "k" })
-
-local function VeloxHubSetCharacterNoCollision(character)
-    if not character then
-        return
-    end
-
-    local states = VeloxHubCollisionStates[character]
-    if not states then
-        states = {}
-        VeloxHubCollisionStates[character] = states
-        for _, descendant in ipairs(character:GetDescendants()) do
-            if descendant:IsA("BasePart") then
-                states[descendant] = descendant.CanCollide
-            end
-        end
-    end
-
-    for _, descendant in ipairs(character:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            descendant.CanCollide = false
-        end
-    end
-end
-
-local function VeloxHubRestoreCharacterCollision(character)
-    if not character then
-        return
-    end
-
-    local states = VeloxHubCollisionStates[character]
-    if states then
-        for part, canCollide in pairs(states) do
-            if part and part.Parent and part:IsDescendantOf(character) then
-                part.CanCollide = canCollide
-            end
-        end
-        VeloxHubCollisionStates[character] = nil
-    end
-
-    -- Recovery for parts modified by a previous script execution, before their
-    -- original collision states could be cached in this execution.
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if humanoidRootPart and humanoidRootPart:IsA("BasePart") then
-        humanoidRootPart.CanCollide = false
-    end
-
-    for _, descendant in ipairs(character:GetDescendants()) do
-        if descendant:IsA("BasePart") then
-            local parent = descendant.Parent
-            if parent and (parent:IsA("Accessory") or parent:IsA("Tool")) then
-                descendant.CanCollide = false
-            end
-        end
-    end
-end
-
--- Restore player control on a fresh VeloxHub execution.
--- The movement guard below creates a zero-velocity BodyClip when automation flags are active.
--- Clear stale global flags first so an older execution cannot leave the player locked in place.
-do
-    local movementAutomationFlags = {
-        "AcientOne", "Addealer", "AuraBoss", "AutoAttackDoughKing", "AutoAttackRipIndra",
-        "AutoBerry", "AutoBerryH", "AutoBigmom", "AutoChestBP", "AutoColShad",
-        "AutoDeathStep", "AutoDoughKing", "AutoDragonTalon", "AutoEcBoss", "AutoEctoplasm",
-        "AutoEvoRace", "AutoFMon", "AutoFactory", "AutoFarmAllBoss", "AutoFarmCandy",
-        "AutoFarmChest", "AutoFarmDungeon", "AutoFarmGodChalice", "AutoFarmIsland", "AutoFarmNear",
-        "AutoFarmRaid", "AutoFarm_Bone", "AutoFireFlowers", "AutoFishSlap", "AutoFistDarkness",
-        "AutoGetQuestBounty", "AutoGetUsoap", "AutoHolyTorch", "AutoHop_Dough", "AutoHytHallow",
-        "AutoKenVTWO", "AutoKillMob", "AutoKilo", "AutoLawKak", "AutoMagnetToken",
-        "AutoMatSoul", "AutoMiror", "AutoMysticIsland", "AutoPhoenixF", "AutoPlayerHunter",
-        "AutoPole", "AutoPoleV2", "AutoRaidCastle", "AutoRipIngay", "AutoSaber",
-        "AutoSaw", "AutoSerpentBow", "AutoSpawnCP", "AutoStartPrehistoric", "AutoTPAndCollect",
-        "AutoTPGift", "AutoTP_Gift", "AutoTridentW2", "AutoUnHaki", "AutoZou",
-        "Auto_Cake_Prince", "Auto_Cavender", "Auto_Def_DarkCoat", "Auto_DonAcces", "Auto_Electric_Claw",
-        "Auto_Fish", "Auto_God_Human", "Auto_Human", "Auto_Mink", "Auto_Rainbow_Haki",
-        "Auto_SharkMan_Karate", "Auto_Skypiea", "Auto_Soul_Guitar", "Auto_StartRaid", "Auto_SuperHuman",
-        "Auto_SwanGG", "Auto_Tushita", "Auto_Yama", "AutofindKitIs", "Bartilo_Quest",
-        "BlackSpikey", "BuyDrago", "CDK", "CDK_TS", "CDK_YM",
-        "CitizenQuest", "CollectPresent", "Collect_Ember", "Complete_Trials", "CraftVM",
-        "DT_Uzoth", "DangerLV", "DarkBladev3", "Defeating", "Dojoo",
-        "Doughv2", "DragoV1", "DragoV3", "DummyMan", "FarmBlazeEM",
-        "FarmBoss", "FarmChestM", "FarmEliteHop", "FarmEliteHunt", "FarmGodChalice",
-        "FarmMastery_Dev", "FarmMastery_G", "FarmMastery_S", "FarmPhaBinh", "FarmTyrant",
-        "FindMirage", "FishBoat", "FrozenTP", "HCM", "HighestMirage",
-        "IceBossRen", "KeysRen", "Level", "Leviathan1", "LongsWord",
-        "Lvthan", "MarinesCoat", "MasterAutoCandy", "MasterAutoLevel", "MobCrew",
-        "PGB", "Piranha", "Praying", "Prefully", "Prehis_DB",
-        "Prehis_DE", "Prehis_Find", "Prehis_Skills", "Raiding", "Relic123",
-        "SafeMode", "SailBoat_Hydra", "SailBoats", "SeaBeast1", "Shark",
-        "StartEvent", "SwanCoat", "TPDoor", "TPFloor1", "TPFloor2",
-        "TPFloor3", "TPFloor4", "TPGEAR", "TPNpc", "Teleport",
-        "TerrorShark", "TpDrago_Prehis", "TpLab", "TpPly", "Tp_LgS",
-        "Tp_MasterA", "TrainDrago", "TravelDres", "TryLucky", "TwFruits",
-        "TwinHook", "UPGDrago", "WardenBoss", "beasthunter", "obsFarm",
-        "snaguine", "tweenKitShrine", "tweenKitsune", "tweenShrine",
-    }
-
-    for _, flagName in ipairs(movementAutomationFlags) do
-        _G[flagName] = false
-    end
-
-    NextIs = false
-    senth = false
-    senth2 = false
-    getgenv().AutoMaterial = false
-    getgenv().OnFarm = false
-    shouldTween = false
-    _G.WasOnFarm = false
-
-    local function restoreLocalMovement(character)
-        if not character then
-            return
-        end
-
-        task.spawn(function()
-            local humanoid = character:FindFirstChildOfClass("Humanoid")
-                or character:WaitForChild("Humanoid", 10)
-            local root = character:FindFirstChild("HumanoidRootPart")
-                or character:WaitForChild("HumanoidRootPart", 10)
-
-            if not humanoid or not root or not character.Parent then
-                return
-            end
-
-            -- Remove the exact force object used by VeloxHub's automation guard.
-            local bodyClip = root:FindFirstChild("BodyClip")
-            if bodyClip and bodyClip:IsA("BodyVelocity") then
-                bodyClip:Destroy()
-            end
-
-            if root.Anchored then
-                root.Anchored = false
-            end
-
-            VeloxHubRestoreCharacterCollision(character)
-            root.CanCollide = false
-
-            local wasPlatformStand = humanoid.PlatformStand
-            if wasPlatformStand then
-                humanoid.PlatformStand = false
-
-                -- Clean up the body movers used by the script's fly controller if it
-                -- was left enabled by an earlier execution.
-                for _, descendant in ipairs(character:GetDescendants()) do
-                    if descendant:IsA("BodyVelocity") or descendant:IsA("BodyGyro") then
-                        local parent = descendant.Parent
-                        if parent and parent:IsA("BasePart") then
-                            descendant:Destroy()
-                        end
-                    end
-                end
-            end
-
-            if humanoid.WalkSpeed <= 0 then
-                humanoid.WalkSpeed = 16
-            end
-            if humanoid.UseJumpPower then
-                if humanoid.JumpPower <= 0 then
-                    humanoid.JumpPower = 50
-                end
-            elseif humanoid.JumpHeight <= 0 then
-                humanoid.JumpHeight = 7.2
-            end
-            humanoid.AutoRotate = true
-        end)
-    end
-
-    if plr.Character then
-        restoreLocalMovement(plr.Character)
-    end
-    plr.CharacterAdded:Connect(function(character)
-        task.delay(0.35, function()
-            if plr.Character == character then
-                restoreLocalMovement(character)
-            end
-        end)
-    end)
-end
-
 local Part = Instance.new("Part", workspace)
 
 Part.Size = Vector3.new(1, 1, 1)
@@ -1433,11 +1250,26 @@ do
 					end
 
 					local Character = LocalPlayer.Character
-					VeloxHubSetCharacterNoCollision(Character)
+
+					if Character then
+						for _, child in pairs(Character:GetChildren()) do
+							if child:IsA("BasePart") then
+								child.CanCollide = false
+							end
+						end
+					end
 				elseif _G.WasOnFarm then
 					_G.WasOnFarm = false
+
 					local Character = LocalPlayer.Character
-					VeloxHubRestoreCharacterCollision(Character)
+
+					if Character then
+						for _, child in pairs(Character:GetChildren()) do
+							if child:IsA("BasePart") then
+								child.CanCollide = true
+							end
+						end
+					end
 				end
 			end)
 		end
@@ -1973,22 +1805,20 @@ do
 						Highlight.Parent = plr.Character
 					end
 
-					VeloxHubSetCharacterNoCollision(plr.Character)
-				else
-					shouldTween = false
-					VeloxHubRestoreCharacterCollision(plr.Character)
-
-					local Character = plr.Character
-					local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
-					if HumanoidRootPart then
-						local BodyClip = HumanoidRootPart:FindFirstChild("BodyClip")
-						if BodyClip then
-							BodyClip:Destroy()
+					for _, descendant in pairs(plr.Character:GetDescendants()) do
+						if descendant:IsA("BasePart") then
+							descendant.CanCollide = false
 						end
 					end
+				else
+					shouldTween = false
 
-					if Character and Character:FindFirstChild("highlight") then
-						Character:FindFirstChild("highlight"):Destroy()
+					if plr.Character.HumanoidRootPart:FindFirstChild("BodyClip") then
+						plr.Character.HumanoidRootPart:FindFirstChild("BodyClip"):Destroy()
+					end
+
+					if plr.Character:FindFirstChild("highlight") then
+						plr.Character:FindFirstChild("highlight"):Destroy()
 					end
 				end
 			end)
@@ -2449,7 +2279,7 @@ end
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua"))()
 local Window = WindUI:CreateWindow({
-    Title = "VeloxHub",
+    Title = "Blox Fruits",
     Author = "by Ovei",
     Icon = "zap",
     Folder = "VeloxHub",
@@ -2464,7 +2294,7 @@ local Window = WindUI:CreateWindow({
     ScrollBarEnabled = false,
     Acrylic = false,
     OpenButton = {
-        Title = "Open VeloxHub",
+        Title = "Open Blox Fruits",
         Icon = "zap",
         Enabled = true,
         Draggable = true,
@@ -32045,7 +31875,7 @@ do
 end
 
 WindUI:Notify({
-	Title = "VeloxHub",
+	Title = "Blox Fruits",
 	Content = "Blox Fruit Loaded",
 	Icon = "check-circle",
 	Duration = 5
