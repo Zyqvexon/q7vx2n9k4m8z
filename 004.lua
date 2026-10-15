@@ -82,7 +82,7 @@ local function NotifyToggle(title, enabled)
     if enabled and not MapReady then
         Notify(
             "Map Required",
-            title .. " is ON, but it will only work after you join Chapter 1 (FARMHOUSE).",
+            title .. " is ON, but the map is still loading. It will work once the map is ready.",
             4,
             "map"
         )
@@ -100,7 +100,6 @@ end
 local function Header(tab, title)
     pcall(function() tab:Section({ Title = title }) end)
 end
-
 
 local ToggleDescriptions = {
     AutoPickHay = "Automatically picks nearby hay. Returns to the hay pile when no hay is close.",
@@ -171,7 +170,6 @@ local function AddSlider(tab, key, title, min, max, default, step, desc)
     })
 end
 
--- Keep all game references non-blocking so WindUI can build before the map loads.
 local NeedleHaystack = nil
 local GameConfig = nil
 local UpgradeConfig = nil
@@ -518,13 +516,10 @@ local function doUnload()
     if Unloaded then return end
     Unloaded = true
     pcall(function() VacuumAction:FireServer("Stop") end)
-    print("[Search For The Needle] Unloaded.")
 end
 
 pcall(function() Window:OnDestroy(doUnload) end)
 
--- Use regular top-level tabs so the navigation stays visible instead of nesting
--- tabs under collapsible sections/dropdowns.
 local MainTab = Window:Tab({ Title = "Overview", Icon = "layout-dashboard" })
 local CollectingTab = Window:Tab({ Title = "Collect", Icon = "package-search" })
 local SellingTab = Window:Tab({ Title = "Sell", Icon = "coins" })
@@ -538,7 +533,7 @@ local mapStatusPara = nil
 do
     mapStatusPara = MainTab:Paragraph({
         Title = "Map Status",
-        Desc = "Waiting for Chapter 1 (FARMHOUSE). Join the map before using automation."
+        Desc = "Waiting for a playable map. Automation becomes available when the game systems are ready."
     })
     local sessionPara = MainTab:Paragraph({ Title = "Session Stats", Desc = "Time: 0m 0s | Cash: $0 | Gems: 0 | Hay: 0/25" })
 
@@ -655,14 +650,11 @@ do
     AddToggle(UpgradesTab, "UpgCapacity", "Upgrade Carrying Capacity (Cash)", false)
 end
 
--- UI is now fully constructed. Select a populated tab before waiting for the map,
--- so the content area is not left blank during loading.
 pcall(function() MainTab:Select() end)
 
--- Tell the user why game features may not work yet, then wait for the map.
-Notify("Map Required", "Join Chapter 1 (FARMHOUSE) first. The UI is available now; script features activate after the map loads.", 8, "map")
+Notify("UI Ready", "The interface is loaded. Join a playable map; features activate when its game systems are detected.", 6, "map")
 pcall(function()
-    mapStatusPara:SetDesc("Waiting for Chapter 1 (FARMHOUSE) to load. Join the map to activate script features.")
+    mapStatusPara:SetDesc("Waiting for a playable map to load. Script features activate when required game systems are available.")
 end)
 
 while not Unloaded and not refreshGameReferences() do
@@ -672,9 +664,9 @@ end
 if not Unloaded then
     MapReady = true
     pcall(function()
-        mapStatusPara:SetDesc("Map ready. Script features are available.")
+        mapStatusPara:SetDesc("Map loaded. Script features are ready to use.")
     end)
-    Notify("Map Ready", "Chapter 1 (FARMHOUSE) detected. Script features are now ready.", 5, "check")
+    Notify("Map Loaded", "Map detected successfully. Script features are now ready to use.", 5, "check")
 end
 
 task.spawn(function()
@@ -976,7 +968,3 @@ task.spawn(function()
     end
 end)
 
-if not Unloaded then
-    Notify("Search for the Needle", "WindUI loaded. Join Chapter 1 (FARMHOUSE) to activate features.", 4, "check")
-    print("[Search For The Needle] WindUI loaded.")
-end
