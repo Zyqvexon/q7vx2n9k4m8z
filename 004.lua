@@ -285,7 +285,7 @@ local function refreshPermanentUpgradeReferences()
 
     local services = shared and shared:FindFirstChild("Services")
     local dataModule = services and services:FindFirstChild("Data")
-    if dataModule and type(PlayerDataClient) ~= "table" then
+    if dataModule then
         local ok, result = pcall(require, dataModule)
         if ok and type(result) == "table" and type(result.client) == "table" then
             PlayerDataClient = result.client
@@ -354,11 +354,56 @@ local function getCash()
 end
 
 local function getGems()
-    local dataGems = readClientDataValue(PlayerDataClient, "Gems")
-    if tonumber(dataGems) then
-        return tonumber(dataGems)
+    local client = PlayerDataClient
+    if type(client) == "table" then
+        local memberOk, member = pcall(function()
+            return client.Gems
+        end)
+        if memberOk then
+            if type(member) == "function" then
+                local valueOk, value = pcall(member)
+                if not valueOk then
+                    valueOk, value = pcall(member, client)
+                end
+                if valueOk then
+                    local amount = tonumber(value)
+                    if amount ~= nil then
+                        return amount
+                    end
+                    if typeof(value) == "Instance" and value:IsA("ValueBase") then
+                        amount = tonumber(value.Value)
+                        if amount ~= nil then
+                            return amount
+                        end
+                    end
+                end
+            else
+                local amount = tonumber(member)
+                if amount ~= nil then
+                    return amount
+                end
+                if typeof(member) == "Instance" and member:IsA("ValueBase") then
+                    amount = tonumber(member.Value)
+                    if amount ~= nil then
+                        return amount
+                    end
+                end
+            end
+        end
     end
-    return tonumber(LocalPlayer:GetAttribute("Gems")) or 0
+
+    local attributeAmount = tonumber(LocalPlayer:GetAttribute("Gems"))
+    if attributeAmount ~= nil then
+        return attributeAmount
+    end
+
+    local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+    local gemsValue = leaderstats and leaderstats:FindFirstChild("Gems")
+    if gemsValue and gemsValue:IsA("ValueBase") then
+        return tonumber(gemsValue.Value)
+    end
+
+    return nil
 end
 
 local function getHayHeld()
@@ -725,6 +770,16 @@ local function tryBuyPermanent(id)
     local currencyAmount
     if currencyName == "Gems" then
         currencyAmount = getGems()
+        if currencyAmount == nil then
+            NotifyPermanentOnce(
+                "GemBalanceUnavailable:" .. id,
+                "Gem Balance Unavailable",
+                "Couldn't read your gem balance from the game's Data.client.Gems() value yet. Try again after the lobby data finishes loading.",
+                4,
+                "alert-circle"
+            )
+            return
+        end
     else
         currencyAmount = tonumber(readClientDataValue(PlayerDataClient, currencyName)) or 0
     end
