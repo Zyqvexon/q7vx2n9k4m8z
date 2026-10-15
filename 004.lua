@@ -78,8 +78,15 @@ local function Notify(title, content, duration, icon)
     end)
 end
 
-local function NotifyToggle(title, enabled)
-    if enabled and not MapReady then
+local LobbyUpgradeKeys = {
+    UpgBagSize = true,
+    UpgExtraTake = true,
+    UpgGemValue = true,
+    UpgHayValue = true,
+}
+
+local function NotifyToggle(title, enabled, key)
+    if enabled and not MapReady and not LobbyUpgradeKeys[key] then
         Notify(
             "Map Required",
             title .. " is ON, but the map is still loading. It will work once the map is ready.",
@@ -154,7 +161,7 @@ local function AddToggle(tab, key, title, default, desc)
         Value = State[key],
         Callback = function(v)
             State[key] = v == true
-            NotifyToggle(title, State[key])
+            NotifyToggle(title, State[key], key)
         end,
     })
 end
@@ -189,21 +196,24 @@ local DroppedHayFolder = nil
 local GemsClientFolder = nil
 
 local function refreshGameReferences()
-    NeedleHaystack = ReplicatedStorage:FindFirstChild("NeedleHaystack")
-    if not NeedleHaystack then return false end
-
-    local configModule = NeedleHaystack:FindFirstChild("Config")
-    if configModule then
-        local ok, result = pcall(require, configModule)
-        if ok then GameConfig = result end
-    end
-
     local shared = ReplicatedStorage:FindFirstChild("Shared")
     local configs = shared and shared:FindFirstChild("Configs")
     local upgradeModule = configs and configs:FindFirstChild("UpgradeConfig")
-    if upgradeModule then
+    if upgradeModule and type(UpgradeConfig) ~= "table" then
         local ok, result = pcall(require, upgradeModule)
-        if ok then UpgradeConfig = result end
+        if ok and type(result) == "table" then UpgradeConfig = result end
+    end
+
+    NeedleHaystack = ReplicatedStorage:FindFirstChild("NeedleHaystack")
+    if not NeedleHaystack then
+        BuyUpgrade = ReplicatedStorage:FindFirstChild("BuyUpgrade")
+        return false
+    end
+
+    local configModule = NeedleHaystack:FindFirstChild("Config")
+    if configModule and type(GameConfig) ~= "table" then
+        local ok, result = pcall(require, configModule)
+        if ok and type(result) == "table" then GameConfig = result end
     end
 
     BuyUpgrade = NeedleHaystack:FindFirstChild("BuyUpgrade")
@@ -431,13 +441,13 @@ local function trySell()
     task.spawn(function()
         task.wait(1.0)
         local needReturn = false
-        if State.AutoPickHay then needReturn = true end
-        if State.AutoCollectDroppedHay then needReturn = true end
-        if State.AutoCollectGems then needReturn = true end
-        if State.AutoVacuumCollect then needReturn = true end
-        if State.AutoVacuum then needReturn = true end
-        if State.AutoUsePitchfork then needReturn = true end
-        if State.AutoFindNeedle then needReturn = true end
+        if MapReady and State.AutoPickHay then needReturn = true end
+        if MapReady and State.AutoCollectDroppedHay then needReturn = true end
+        if MapReady and State.AutoCollectGems then needReturn = true end
+        if MapReady and State.AutoVacuumCollect then needReturn = true end
+        if MapReady and State.AutoVacuum then needReturn = true end
+        if MapReady and State.AutoUsePitchfork then needReturn = true end
+        if MapReady and State.AutoFindNeedle then needReturn = true end
         if needReturn and getHayHeld() == 0 then
             local pile = GameConfig.PILE_CENTER
             local hrp2 = getHRP()
@@ -501,13 +511,26 @@ local function tryBuyTrack(trackName)
 end
 
 local function tryBuyPermanent(id)
-    local u = UpgradeConfig.getUpgrade(id)
-    if not u then return end
+    if type(UpgradeConfig) ~= "table" or not BuyUpgrade then
+        refreshGameReferences()
+    end
+    if type(UpgradeConfig) ~= "table" or not BuyUpgrade then return end
+
+    local ok, u = pcall(function()
+        return UpgradeConfig.getUpgrade(id)
+    end)
+    if not ok or not u then return end
+
     local cur = tonumber(LocalPlayer:GetAttribute("Upgrade" .. id)) or 0
-    local max = UpgradeConfig.getMaxLevel(u)
-    if cur >= max then return end
-    local price = UpgradeConfig.getPrice(u, cur)
-    if price and getGems() >= price then
+    local maxOk, max = pcall(function()
+        return UpgradeConfig.getMaxLevel(u)
+    end)
+    if not maxOk or type(max) ~= "number" or cur >= max then return end
+
+    local priceOk, price = pcall(function()
+        return UpgradeConfig.getPrice(u, cur)
+    end)
+    if priceOk and price and getGems() >= price then
         pcall(function() BuyUpgrade:FireServer(id) end)
     end
 end
@@ -652,28 +675,35 @@ end
 
 pcall(function() MainTab:Select() end)
 
-Notify("UI Ready", "The interface is loaded. Join a playable map; features activate when its game systems are detected.", 6, "map")
+Notify("UI Ready", "The interface is loaded. Permanent gem upgrades can run in the lobby; map automation starts when a playable map is detected.", 6, "map")
 pcall(function()
-    mapStatusPara:SetDesc("Waiting for a playable map to load. Script features activate when required game systems are available.")
+    mapStatusPara:SetDesc("Waiting for a playable map. Permanent gem upgrades can run in the lobby when upgrade data is available.")
 end)
 
-while not Unloaded and not refreshGameReferences() do
-    task.wait(1)
-end
-
-if not Unloaded then
-    MapReady = true
-    pcall(function()
-        mapStatusPara:SetDesc("Map loaded. Script features are ready to use.")
-    end)
-    Notify("Map Loaded", "Map detected successfully. Script features are now ready to use.", 5, "check")
-end
+task.spawn(function()
+    while not Unloaded do
+        local ready = refreshGameReferences()
+        if ready and not MapReady then
+            MapReady = true
+            pcall(function()
+                mapStatusPara:SetDesc("Map loaded. Map automation is ready. Permanent gem upgrades can run in the lobby.")
+            end)
+            Notify("Map Loaded", "Map detected successfully. Map automation is now ready.", 5, "check")
+        elseif not ready and MapReady then
+            MapReady = false
+            pcall(function()
+                mapStatusPara:SetDesc("Waiting for a playable map. Permanent gem upgrades remain available in the lobby when upgrade data is loaded.")
+            end)
+        end
+        task.wait(1)
+    end
+end)
 
 task.spawn(function()
     while true do
         task.wait(waitInterval("CollectInterval", 1))
         if Unloaded then break end
-        if State.AutoPickHay then
+        if MapReady and State.AutoPickHay then
             if not isBagFull() then
                 local hay = findClosestHay()
                 if not hay then
@@ -701,7 +731,7 @@ task.spawn(function()
     while true do
         task.wait(waitInterval("CollectInterval", 1))
         if Unloaded then break end
-        if State.AutoCollectDroppedHay then
+        if MapReady and State.AutoCollectDroppedHay then
             if not isBagFull() then
                 local d = findClosestDropped()
                 if not d then
@@ -722,7 +752,7 @@ task.spawn(function()
     while true do
         task.wait(waitInterval("CollectInterval", 1))
         if Unloaded then break end
-        if State.AutoCollectGems then
+        if MapReady and State.AutoCollectGems then
             local gemPart, id = findClosestGem()
             if not gemPart then
                 ensureNearPileForPick()
@@ -740,7 +770,7 @@ task.spawn(function()
     while true do
         task.wait(1)
         if Unloaded then break end
-        if State.AutoSellHay then
+        if MapReady and State.AutoSellHay then
             local held = getHayHeld()
             local thresh = tonumber(State.SellThreshold) or 25
             local should
@@ -760,7 +790,7 @@ do
         while true do
             task.wait(waitInterval("CollectInterval", 1))
             if Unloaded then break end
-            local should = State.AutoVacuumCollect or State.AutoVacuum
+            local should = MapReady and (State.AutoVacuumCollect or State.AutoVacuum)
             if should and owns("VacuumOwned") then
                 if not vacActive and not isBagFull() then
 
@@ -798,7 +828,7 @@ task.spawn(function()
     while true do
         task.wait(waitInterval("ToolInterval", 1))
         if Unloaded then break end
-        if State.AutoUseTNT and owns("TntOwned") then
+        if MapReady and State.AutoUseTNT and owns("TntOwned") then
             local ok = not LocalPlayer:GetAttribute("NeedleInputLocked")
             if ok then
                 pcall(function() TntAction:FireServer("light") end)
@@ -818,7 +848,7 @@ task.spawn(function()
     while true do
         task.wait(waitInterval("ToolInterval", 1))
         if Unloaded then break end
-        if State.AutoUsePitchfork and owns("PitchforkOwned") then
+        if MapReady and State.AutoUsePitchfork and owns("PitchforkOwned") then
             local hay = findClosestHay()
             if not hay then
                 ensureNearPileForPick()
@@ -844,7 +874,7 @@ task.spawn(function()
     while true do
         task.wait(waitInterval("ToolInterval", 1))
         if Unloaded then break end
-        if State.AutoDeployDrone and owns("DroneOwned") then
+        if MapReady and State.AutoDeployDrone and owns("DroneOwned") then
             if not LocalPlayer:GetAttribute("DroneDeployed") then
                 pcall(function() DeployDrone:FireServer() end)
             end
@@ -856,7 +886,7 @@ task.spawn(function()
     while true do
         task.wait(waitInterval("NeedleInterval", 1))
         if Unloaded then break end
-        if State.AutoFindNeedle then
+        if MapReady and State.AutoFindNeedle then
             if not LocalPlayer:GetAttribute("NeedleRoundComplete") then
                 local hay = findClosestHay()
                 if not hay then
@@ -876,7 +906,7 @@ task.spawn(function()
                 end
             end
         end
-        if State.AutoHandInNeedle then
+        if MapReady and State.AutoHandInNeedle then
 
             local farmer = Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("Farmer_NPC")
             if farmer and farmer:GetPivot() then
@@ -895,7 +925,7 @@ task.spawn(function()
     while true do
         task.wait(waitInterval("BuyInterval", 1))
         if Unloaded then break end
-        if State.AutoBuyTools then
+        if MapReady and State.AutoBuyTools then
             local sel = State.BuyToolsList or {}
             local list = {}
             if typeof(sel) == "table" then
@@ -949,22 +979,22 @@ task.spawn(function()
     while true do
         task.wait(1.2)
         if Unloaded then break end
-        if State.UpgCapacity then tryBuyTrack("Capacity") end
-        if State.UpgHandSpeed then tryBuyTrack("Speed") end
-        if State.UpgHandGrab then tryBuyTrack("Grab") end
-        if State.UpgHandHold then tryBuyTrack("HandHold") end
-        if State.UpgTntLuck then tryBuyTrack("TntLuck") end
-        if State.UpgTntCooldown then tryBuyTrack("TntCooldown") end
-        if State.UpgTntPower then tryBuyTrack("TntPower") end
-        if State.UpgPitchCooldown then tryBuyTrack("PitchforkCooldown") end
-        if State.UpgPitchHold then tryBuyTrack("PitchforkHold") end
-        if State.UpgPitchSweep then tryBuyTrack("Pitchfork") end
-        if State.UpgDroneSpeed then tryBuyTrack("DroneSpeed") end
-        if State.UpgDroneGrab then tryBuyTrack("DroneGrab") end
-        if State.UpgDroneCapacity then tryBuyTrack("DroneCapacity") end
-        if State.UpgVacPower then tryBuyTrack("VacuumPower") end
-        if State.UpgVacCooling then tryBuyTrack("VacuumCooling") end
-        if State.UpgVacRuntime then tryBuyTrack("VacuumRuntime") end
+        if MapReady and State.UpgCapacity then tryBuyTrack("Capacity") end
+        if MapReady and State.UpgHandSpeed then tryBuyTrack("Speed") end
+        if MapReady and State.UpgHandGrab then tryBuyTrack("Grab") end
+        if MapReady and State.UpgHandHold then tryBuyTrack("HandHold") end
+        if MapReady and State.UpgTntLuck then tryBuyTrack("TntLuck") end
+        if MapReady and State.UpgTntCooldown then tryBuyTrack("TntCooldown") end
+        if MapReady and State.UpgTntPower then tryBuyTrack("TntPower") end
+        if MapReady and State.UpgPitchCooldown then tryBuyTrack("PitchforkCooldown") end
+        if MapReady and State.UpgPitchHold then tryBuyTrack("PitchforkHold") end
+        if MapReady and State.UpgPitchSweep then tryBuyTrack("Pitchfork") end
+        if MapReady and State.UpgDroneSpeed then tryBuyTrack("DroneSpeed") end
+        if MapReady and State.UpgDroneGrab then tryBuyTrack("DroneGrab") end
+        if MapReady and State.UpgDroneCapacity then tryBuyTrack("DroneCapacity") end
+        if MapReady and State.UpgVacPower then tryBuyTrack("VacuumPower") end
+        if MapReady and State.UpgVacCooling then tryBuyTrack("VacuumCooling") end
+        if MapReady and State.UpgVacRuntime then tryBuyTrack("VacuumRuntime") end
     end
 end)
 
