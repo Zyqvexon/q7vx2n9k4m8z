@@ -181,6 +181,7 @@ local NeedleHaystack = nil
 local GameConfig = nil
 local UpgradeConfig = nil
 local PlayerDataClient = nil
+local PlayerDataModule = nil
 local ShopItemsConfig = nil
 local ShopNetworker = nil
 local ShopRemoteFunction = nil
@@ -283,12 +284,40 @@ local function refreshPermanentUpgradeReferences()
         end
     end
 
+    local function loadPlayerDataModule(moduleScript)
+        if not moduleScript or not moduleScript:IsA("ModuleScript") then
+            return false
+        end
+        local ok, result = pcall(require, moduleScript)
+        if not ok or result == nil then
+            return false
+        end
+        PlayerDataModule = result
+        local client = nil
+        pcall(function() client = result.client end)
+        if client == nil then pcall(function() client = result.Client end) end
+        if client ~= nil then
+            PlayerDataClient = client
+        elseif type(result) == "table" then
+            PlayerDataClient = result
+        end
+        return PlayerDataClient ~= nil
+    end
+
     local services = shared and shared:FindFirstChild("Services")
     local dataModule = services and services:FindFirstChild("Data")
-    if dataModule then
-        local ok, result = pcall(require, dataModule)
-        if ok and type(result) == "table" and type(result.client) == "table" then
-            PlayerDataClient = result.client
+    local sharedDataModule = shared and shared:FindFirstChild("Data")
+    local rootDataModule = ReplicatedStorage:FindFirstChild("Data")
+    local servicesRoot = ReplicatedStorage:FindFirstChild("Services")
+    local servicesDataModule = servicesRoot and servicesRoot:FindFirstChild("Data")
+
+    if PlayerDataModule == nil then
+        if not loadPlayerDataModule(dataModule)
+            and not loadPlayerDataModule(sharedDataModule)
+            and not loadPlayerDataModule(servicesDataModule)
+            and not loadPlayerDataModule(rootDataModule) then
+            local recursiveData = ReplicatedStorage:FindFirstChild("Data", true)
+            loadPlayerDataModule(recursiveData)
         end
     end
 
@@ -316,7 +345,6 @@ local function refreshPermanentUpgradeReferences()
     end
 
     return type(UpgradeConfig) == "table"
-        and type(PlayerDataClient) == "table"
         and (ShopNetworker ~= nil or ShopRemoteFunction ~= nil)
 end
 
@@ -328,15 +356,18 @@ local function readClientDataValue(container, key)
     local ok, value = pcall(function()
         return container[key]
     end)
-    if not ok then
+    if not ok or value == nil then
         return nil
     end
 
+    local callOk, result = pcall(function()
+        return value()
+    end)
+    if callOk then
+        return result
+    end
+
     if type(value) == "function" then
-        local valueOk, result = pcall(value)
-        if valueOk then
-            return result
-        end
         return nil
     end
 
@@ -353,54 +384,160 @@ local function getCash()
     return cash and cash.Value or 0
 end
 
-local function getGems()
-    local client = PlayerDataClient
-    if type(client) == "table" then
-        local memberOk, member = pcall(function()
-            return client.Gems
-        end)
-        if memberOk then
-            if type(member) == "function" then
-                local valueOk, value = pcall(member)
-                if not valueOk then
-                    valueOk, value = pcall(member, client)
-                end
-                if valueOk then
-                    local amount = tonumber(value)
-                    if amount ~= nil then
-                        return amount
-                    end
-                    if typeof(value) == "Instance" and value:IsA("ValueBase") then
-                        amount = tonumber(value.Value)
-                        if amount ~= nil then
-                            return amount
-                        end
-                    end
-                end
-            else
-                local amount = tonumber(member)
-                if amount ~= nil then
-                    return amount
-                end
-                if typeof(member) == "Instance" and member:IsA("ValueBase") then
-                    amount = tonumber(member.Value)
-                    if amount ~= nil then
-                        return amount
+local function numericFromData(value, owner, depth)
+    depth = depth or 0
+    if depth > 3 or value == nil then return nil end
+
+    local valueType = typeof(value)
+    if valueType == "number" then return value end
+    if valueType == "string" then return tonumber(value) end
+    if valueType == "Instance" then
+        if value:IsA("ValueBase") then
+            return tonumber(value.Value)
+        end
+        local attribute = nil
+        pcall(function() attribute = value:GetAttribute("Gems") end)
+        local amount = tonumber(attribute)
+        if amount ~= nil then return amount end
+        local child = nil
+        pcall(function() child = value:FindFirstChild("Gems") end)
+        if child then return numericFromData(child, value, depth + 1) end
+        return nil
+    end
+
+    if type(value) == "table" or type(value) == "userdata" then
+        for _, key in ipairs({ "Value", "value", "Amount", "amount", "Current", "current", "Balance", "balance" }) do
+            local ok, nested = pcall(function() return value[key] end)
+            if ok and nested ~= nil and nested ~= value then
+                local amount = numericFromData(nested, value, depth + 1)
+                if amount ~= nil then return amount end
+            end
+        end
+
+        for _, methodName in ipairs({ "Get", "get", "Peek", "peek", "GetValue", "getValue" }) do
+            local ok, method = pcall(function() return value[methodName] end)
+            if ok and type(method) == "function" then
+                local results = {
+                    table.pack(pcall(method)),
+                    table.pack(pcall(method, value)),
+                    table.pack(pcall(method, LocalPlayer)),
+                    table.pack(pcall(method, value, LocalPlayer)),
+                }
+                for _, result in ipairs(results) do
+                    if result[1] and result[2] ~= nil then
+                        local amount = numericFromData(result[2], value, depth + 1)
+                        if amount ~= nil then return amount end
                     end
                 end
             end
         end
     end
+    return nil
+end
 
-    local attributeAmount = tonumber(LocalPlayer:GetAttribute("Gems"))
-    if attributeAmount ~= nil then
-        return attributeAmount
+local function getGems()
+    if PlayerDataClient == nil then
+        local shared = ReplicatedStorage:FindFirstChild("Shared")
+        local services = shared and shared:FindFirstChild("Services")
+        local dataModule = services and services:FindFirstChild("Data")
+        if dataModule and dataModule:IsA("ModuleScript") then
+            local ok, result = pcall(require, dataModule)
+            if ok and result ~= nil then
+                PlayerDataModule = result
+                local clientOk, client = pcall(function()
+                    return result.client
+                end)
+                if clientOk and client ~= nil then
+                    PlayerDataClient = client
+                end
+            end
+        end
+    end
+
+    if PlayerDataClient ~= nil then
+        local ok, value = pcall(function()
+            return PlayerDataClient.Gems()
+        end)
+        local amount = ok and tonumber(value) or nil
+        if amount ~= nil then
+            return amount
+        end
+    end
+
+    local function readGemMember(container, key)
+        if container == nil then return nil end
+        local ok, member = pcall(function() return container[key] end)
+        if not ok or member == nil then return nil end
+
+        if type(member) == "function" then
+            local calls = {
+                table.pack(pcall(member)),
+                table.pack(pcall(member, container)),
+                table.pack(pcall(member, LocalPlayer)),
+                table.pack(pcall(member, container, LocalPlayer)),
+            }
+            for _, result in ipairs(calls) do
+                if result[1] and result[2] ~= nil then
+                    local amount = numericFromData(result[2], container, 0)
+                    if amount ~= nil then return amount end
+                end
+            end
+            return nil
+        end
+        return numericFromData(member, container, 0)
+    end
+
+    local roots = {}
+    if PlayerDataClient ~= nil then table.insert(roots, PlayerDataClient) end
+    if PlayerDataModule ~= nil then
+        local moduleClient, moduleClientUpper = nil, nil
+        pcall(function() moduleClient = PlayerDataModule.client end)
+        pcall(function() moduleClientUpper = PlayerDataModule.Client end)
+        if moduleClient ~= nil and moduleClient ~= PlayerDataClient then table.insert(roots, moduleClient) end
+        if moduleClientUpper ~= nil and moduleClientUpper ~= PlayerDataClient then table.insert(roots, moduleClientUpper) end
+        if PlayerDataModule ~= PlayerDataClient then table.insert(roots, PlayerDataModule) end
+    end
+
+    for _, root in ipairs(roots) do
+        for _, key in ipairs({ "Gems", "gems", "GemCount", "GemsAmount", "GemAmount" }) do
+            local amount = readGemMember(root, key)
+            if amount ~= nil then return amount end
+        end
+        for _, dataKey in ipairs({ "Data", "data", "PlayerData", "playerData", "Stats", "stats", "Currencies", "currencies" }) do
+            local nestedOk, nested = pcall(function() return root[dataKey] end)
+            if nestedOk and nested ~= nil then
+                for _, key in ipairs({ "Gems", "gems", "GemCount", "GemsAmount", "GemAmount" }) do
+                    local amount = readGemMember(nested, key)
+                    if amount ~= nil then return amount end
+                end
+            end
+        end
+    end
+
+    for _, key in ipairs({ "Gems", "GemCount", "GemsAmount", "GemAmount" }) do
+        local amount = nil
+        pcall(function() amount = tonumber(LocalPlayer:GetAttribute(key)) end)
+        if amount ~= nil then return amount end
     end
 
     local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
-    local gemsValue = leaderstats and leaderstats:FindFirstChild("Gems")
-    if gemsValue and gemsValue:IsA("ValueBase") then
-        return tonumber(gemsValue.Value)
+    local playerDataFolder = LocalPlayer:FindFirstChild("PlayerData") or LocalPlayer:FindFirstChild("Data")
+    local playerFolders = {}
+    if leaderstats then table.insert(playerFolders, leaderstats) end
+    if playerDataFolder then table.insert(playerFolders, playerDataFolder) end
+    for _, folder in ipairs(playerFolders) do
+        local value = folder:FindFirstChild("Gems") or folder:FindFirstChild("GemCount")
+        if value then
+            local amount = numericFromData(value, folder, 0)
+            if amount ~= nil then return amount end
+        end
+    end
+
+    for _, descendant in ipairs(LocalPlayer:GetDescendants()) do
+        if descendant.Name == "Gems" or descendant.Name == "GemCount" then
+            local amount = numericFromData(descendant, descendant.Parent, 0)
+            if amount ~= nil then return amount end
+        end
     end
 
     return nil
@@ -774,8 +911,8 @@ local function tryBuyPermanent(id)
             NotifyPermanentOnce(
                 "GemBalanceUnavailable:" .. id,
                 "Gem Balance Unavailable",
-                "Couldn't read your gem balance from the game's Data.client.Gems() value yet. Try again after the lobby data finishes loading.",
-                4,
+                "Could not read your Gems balance from the game data yet. Try again after your player data finishes loading.",
+                5,
                 "alert-circle"
             )
             return
