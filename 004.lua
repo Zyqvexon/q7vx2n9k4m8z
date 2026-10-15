@@ -180,6 +180,10 @@ end
 local NeedleHaystack = nil
 local GameConfig = nil
 local UpgradeConfig = nil
+local PlayerDataClient = nil
+local ShopItemsConfig = nil
+local ShopNetworker = nil
+local ShopRemoteFunction = nil
 local BuyUpgrade = nil
 local BuyShopItem = nil
 local PickHay = nil
@@ -248,6 +252,101 @@ local function refreshGameReferences()
         and NeedleHandIn ~= nil
 end
 
+local PermanentNoticeState = {}
+
+local function NotifyPermanentOnce(key, title, content, duration, icon)
+    local now = os.clock()
+    local previous = PermanentNoticeState[key]
+    if previous and previous.content == content and now - previous.time < 8 then
+        return
+    end
+    PermanentNoticeState[key] = { time = now, content = content }
+    Notify(title, content, duration or 4, icon or "info")
+end
+
+local function refreshPermanentUpgradeReferences()
+    local shared = ReplicatedStorage:FindFirstChild("Shared")
+    local configs = shared and shared:FindFirstChild("Configs")
+    local upgradeModule = configs and configs:FindFirstChild("UpgradeConfig")
+    if upgradeModule and type(UpgradeConfig) ~= "table" then
+        local ok, result = pcall(require, upgradeModule)
+        if ok and type(result) == "table" then
+            UpgradeConfig = result
+        end
+    end
+
+    local shopItemsModule = configs and configs:FindFirstChild("ShopItems")
+    if shopItemsModule and type(ShopItemsConfig) ~= "table" then
+        local ok, result = pcall(require, shopItemsModule)
+        if ok and type(result) == "table" then
+            ShopItemsConfig = result
+        end
+    end
+
+    local services = shared and shared:FindFirstChild("Services")
+    local dataModule = services and services:FindFirstChild("Data")
+    if dataModule and type(PlayerDataClient) ~= "table" then
+        local ok, result = pcall(require, dataModule)
+        if ok and type(result) == "table" and type(result.client) == "table" then
+            PlayerDataClient = result.client
+        end
+    end
+
+    local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local shopGui = playerGui and playerGui:FindFirstChild("ShopUI")
+    local shopMain = shopGui and shopGui:FindFirstChild("Main")
+    local shopClientScript = shopMain and shopMain:FindFirstChild("ShopUIClient")
+    if shopClientScript and shopClientScript:IsA("ModuleScript") then
+        local ok, client = pcall(require, shopClientScript)
+        if ok and type(client) == "table" then
+            local networker = client.networker
+            if type(networker) == "table" and type(networker.fetch) == "function" then
+                ShopNetworker = networker
+            end
+        end
+    end
+
+    local packages = ReplicatedStorage:FindFirstChild("Packages")
+    local networkerFolder = packages and packages:FindFirstChild("Networker")
+    local remotes = networkerFolder and networkerFolder:FindFirstChild("_remotes")
+    local shopRemoteFolder = remotes and remotes:FindFirstChild("ShopUI")
+    local remoteFunction = shopRemoteFolder and shopRemoteFolder:FindFirstChild("RemoteFunction")
+    if remoteFunction and remoteFunction:IsA("RemoteFunction") then
+        ShopRemoteFunction = remoteFunction
+    end
+
+    return type(UpgradeConfig) == "table"
+        and type(PlayerDataClient) == "table"
+        and (ShopNetworker ~= nil or ShopRemoteFunction ~= nil)
+end
+
+local function readClientDataValue(container, key)
+    if container == nil or key == nil then
+        return nil
+    end
+
+    local ok, value = pcall(function()
+        return container[key]
+    end)
+    if not ok then
+        return nil
+    end
+
+    if type(value) == "function" then
+        local valueOk, result = pcall(value)
+        if valueOk then
+            return result
+        end
+        return nil
+    end
+
+    if typeof(value) == "Instance" and value:IsA("ValueBase") then
+        return value.Value
+    end
+
+    return value
+end
+
 local function getCash()
     local ls = LocalPlayer:FindFirstChild("leaderstats")
     local cash = ls and ls:FindFirstChild("Cash")
@@ -255,6 +354,10 @@ local function getCash()
 end
 
 local function getGems()
+    local dataGems = readClientDataValue(PlayerDataClient, "Gems")
+    if tonumber(dataGems) then
+        return tonumber(dataGems)
+    end
     return tonumber(LocalPlayer:GetAttribute("Gems")) or 0
 end
 
@@ -510,28 +613,170 @@ local function tryBuyTrack(trackName)
     end
 end
 
-local function tryBuyPermanent(id)
-    if type(UpgradeConfig) ~= "table" or not BuyUpgrade then
-        refreshGameReferences()
+local function getPermanentUpgradeById(id)
+    if type(ShopItemsConfig) == "table" and type(ShopItemsConfig.getUpgrades) == "function" then
+        local ok, upgrades = pcall(function()
+            return ShopItemsConfig.getUpgrades()
+        end)
+        if ok and type(upgrades) == "table" then
+            for _, upgrade in pairs(upgrades) do
+                if type(upgrade) == "table" and (upgrade.Id == id or upgrade.DataKey == id) then
+                    return upgrade
+                end
+            end
+        end
     end
-    if type(UpgradeConfig) ~= "table" or not BuyUpgrade then return end
 
-    local ok, u = pcall(function()
-        return UpgradeConfig.getUpgrade(id)
-    end)
-    if not ok or not u then return end
+    if type(UpgradeConfig) ~= "table" then
+        return nil
+    end
 
-    local cur = tonumber(LocalPlayer:GetAttribute("Upgrade" .. id)) or 0
-    local maxOk, max = pcall(function()
-        return UpgradeConfig.getMaxLevel(u)
+    if UpgradeConfig.Scope and UpgradeConfig.Scope.Permanent ~= nil
+        and type(UpgradeConfig.getByScope) == "function" then
+        local ok, upgrades = pcall(function()
+            return UpgradeConfig.getByScope(UpgradeConfig.Scope.Permanent)
+        end)
+        if ok and type(upgrades) == "table" then
+            for _, upgrade in pairs(upgrades) do
+                if type(upgrade) == "table" and (upgrade.Id == id or upgrade.DataKey == id) then
+                    return upgrade
+                end
+            end
+        end
+    end
+
+    if type(UpgradeConfig.getUpgrade) == "function" then
+        local ok, upgrade = pcall(function()
+            return UpgradeConfig.getUpgrade(id)
+        end)
+        if ok and type(upgrade) == "table" then
+            return upgrade
+        end
+    end
+
+    return nil
+end
+
+local function tryBuyPermanent(id)
+    if not refreshPermanentUpgradeReferences() then
+        NotifyPermanentOnce(
+            "PermanentUpgradeSetup",
+            "Permanent Upgrades Waiting",
+            "Waiting for the lobby shop data and purchase remote to load.",
+            4,
+            "clock"
+        )
+        return
+    end
+
+    local upgrade = getPermanentUpgradeById(id)
+    if not upgrade then
+        NotifyPermanentOnce(
+            "MissingUpgrade:" .. id,
+            "Upgrade Not Found",
+            "Couldn't find the permanent upgrade: " .. id,
+            4,
+            "alert-circle"
+        )
+        return
+    end
+
+    local playerUpgrades = readClientDataValue(PlayerDataClient, "PlayerUpgrades")
+    local dataKey = upgrade.DataKey or id
+    local currentLevel = tonumber(readClientDataValue(playerUpgrades, dataKey))
+    if currentLevel == nil then
+        currentLevel = tonumber(LocalPlayer:GetAttribute("Upgrade" .. dataKey)) or 0
+    end
+
+    local maxOk, maxLevel = pcall(function()
+        return UpgradeConfig.getMaxLevel(upgrade)
     end)
-    if not maxOk or type(max) ~= "number" or cur >= max then return end
+    if not maxOk or type(maxLevel) ~= "number" then
+        NotifyPermanentOnce(
+            "MaxLevel:" .. id,
+            "Upgrade Data Error",
+            "Couldn't read the maximum level for " .. tostring(upgrade.Name or id) .. ".",
+            4,
+            "alert-circle"
+        )
+        return
+    end
+
+    if currentLevel >= maxLevel then
+        return
+    end
 
     local priceOk, price = pcall(function()
-        return UpgradeConfig.getPrice(u, cur)
+        return UpgradeConfig.getPrice(upgrade, currentLevel)
     end)
-    if priceOk and price and getGems() >= price then
-        pcall(function() BuyUpgrade:FireServer(id) end)
+    price = priceOk and tonumber(price) or nil
+    if not price then
+        NotifyPermanentOnce(
+            "PriceUnavailable:" .. id,
+            "Upgrade Price Unavailable",
+            "Couldn't read the next gem cost for " .. tostring(upgrade.Name or id) .. ".",
+            4,
+            "alert-circle"
+        )
+        return
+    end
+
+    local currencyName = upgrade.Currency or "Gems"
+    local currencyAmount
+    if currencyName == "Gems" then
+        currencyAmount = getGems()
+    else
+        currencyAmount = tonumber(readClientDataValue(PlayerDataClient, currencyName)) or 0
+    end
+    if currencyAmount < price then
+        NotifyPermanentOnce(
+            "InsufficientCurrency:" .. id,
+            "Not Enough " .. currencyName,
+            tostring(upgrade.Name or id) .. " costs " .. tostring(price) .. " " .. currencyName
+                .. "; you currently have " .. tostring(currencyAmount) .. ".",
+            4,
+            "gem"
+        )
+        return
+    end
+
+    local requestOk, purchased, purchaseError = pcall(function()
+        if ShopNetworker and type(ShopNetworker.fetch) == "function" then
+            return ShopNetworker:fetch("BuyUpgrade", upgrade.Id or id)
+        end
+        if ShopRemoteFunction then
+            return ShopRemoteFunction:InvokeServer("BuyUpgrade", upgrade.Id or id)
+        end
+        error("The game's ShopUI purchase network is not ready yet.")
+    end)
+
+    if not requestOk then
+        NotifyPermanentOnce(
+            "PurchaseException:" .. id,
+            "Upgrade Purchase Error",
+            tostring(purchased),
+            4,
+            "x"
+        )
+        return
+    end
+
+    if purchased then
+        NotifyPermanentOnce(
+            "Purchased:" .. id .. ":" .. tostring(currentLevel + 1),
+            "Permanent Upgrade Purchased",
+            tostring(upgrade.Name or id) .. " upgraded to level " .. tostring(currentLevel + 1) .. ".",
+            3,
+            "check"
+        )
+    else
+        NotifyPermanentOnce(
+            "PurchaseRejected:" .. id,
+            "Upgrade Purchase Failed",
+            tostring(purchaseError or "The game did not confirm the purchase."),
+            4,
+            "x"
+        )
     end
 end
 
@@ -965,6 +1210,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
+    refreshPermanentUpgradeReferences()
     while true do
         task.wait(waitInterval("PermInterval", 1))
         if Unloaded then break end
