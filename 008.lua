@@ -1607,4 +1607,334 @@ local TotemsList = { "TotemOfLuck", "TotemOfRebirths", "TotemOfClicks", "TotemOf
 
 PetsTab:Toggle({
     Title = "Use Boosts",
-    Desc  = "Uses selected boosts from your inventory
+    Desc  = "Uses selected boosts from your inventory.",
+    Value = false,
+    Flag  = "useBoosts",
+    Callback = function(v) ItemState.BoostRunning = v end,
+})
+PetsTab:Dropdown({
+    Title  = "Select Boosts",
+    Desc   = "Choose which boosts to use.",
+    Values = BoostList,
+    Multi  = true,
+    AllowNone = true,
+    Callback = function(v) ItemState.SelectedBoosts = v end,
+})
+PetsTab:Toggle({
+    Title = "Open Gifts",
+    Desc  = "Opens selected gift items.",
+    Value = false,
+    Flag  = "openGifts",
+    Callback = function(v) ItemState.GiftRunning = v end,
+})
+PetsTab:Dropdown({
+    Title  = "Select Gifts",
+    Desc   = "Choose which gifts to open.",
+    Values = GiftsList,
+    Multi  = true,
+    AllowNone = true,
+    Callback = function(v) ItemState.SelectedGifts = v end,
+})
+PetsTab:Toggle({
+    Title = "Feed Treats",
+    Desc  = "Feeds selected treats to your first pet.",
+    Value = false,
+    Flag  = "feedTreats",
+    Callback = function(v) ItemState.TreatRunning = v end,
+})
+PetsTab:Dropdown({
+    Title  = "Select Treats",
+    Desc   = "Choose which treats to feed.",
+    Values = TreatsList,
+    Multi  = true,
+    AllowNone = true,
+    Callback = function(v) ItemState.SelectedTreats = v end,
+})
+PetsTab:Toggle({
+    Title = "Place Totems",
+    Desc  = "Places selected totems near you.",
+    Value = false,
+    Flag  = "placeTotems",
+    Callback = function(v) ItemState.TotemRunning = v end,
+})
+PetsTab:Dropdown({
+    Title  = "Select Totems",
+    Desc   = "Choose which totems to place.",
+    Values = TotemsList,
+    Multi  = true,
+    AllowNone = true,
+    Callback = function(v) ItemState.SelectedTotems = v end,
+})
+PetsTab:Slider({
+    Title = "Item Delay",
+    Desc  = "Time to wait between item actions.",
+    Step  = 0.1,
+    Value = { Min = 0.5, Max = 5, Default = 1 },
+    Callback = function(v) ItemState.Delay = v end,
+})
+
+local PetsStatus = PetsTab:Paragraph({ Title = "Status", Desc = "Idle" })
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            PetsStatus:SetDesc(string.format(
+                "Hatched: %d | Crafted: %d | Items used: %d | %s",
+                HatchCraftState.Hatched, HatchCraftState.Crafted, ItemState.Used, HatchCraftState.Status
+            ))
+        end)
+    end
+end)
+
+-- ============================================================
+-- CHESTS TAB
+-- ============================================================
+
+ChestsTab:Section({ Title = "Auto Tap Chest", Opened = true })
+local TapChestCollectToggle, TapChestOpenToggle
+TapChestCollectToggle = ChestsTab:Toggle({
+    Title = "Auto Collect Tap Chest",
+    Desc  = "Runs the game's own chest opening sequence.",
+    Value = false,
+    Flag  = "autoCollectTapChest",
+    Callback = function(v)
+        TapChestState.CollectRunning = v
+        if v and TapChestState.OpenRunning then
+            TapChestState.OpenRunning = false
+            pcall(function() TapChestOpenToggle:Set(false) end)
+        end
+    end,
+})
+TapChestOpenToggle = ChestsTab:Toggle({
+    Title = "Auto Open Tap Chest",
+    Desc  = "Runs the full chest opening animation before claiming.",
+    Value = false,
+    Flag  = "autoOpenTapChest",
+    Callback = function(v)
+        TapChestState.OpenRunning = v
+        if v and TapChestState.CollectRunning then
+            TapChestState.CollectRunning = false
+            pcall(function() TapChestCollectToggle:Set(false) end)
+        end
+    end,
+})
+ChestsTab:Slider({
+    Title = "Chest Delay",
+    Desc  = "Time to wait between chest actions.",
+    Step  = 0.1,
+    Value = { Min = 0.1, Max = 3, Default = 0.5 },
+    Callback = function(v) TapChestState.Delay = v end,
+})
+
+ChestsTab:Section({ Title = "Auto Clicker Chest", Opened = false })
+ChestsTab:Toggle({
+    Title = "Auto Teleport to Clicker Chest",
+    Desc  = "Finds the nearest ClickerChest and teleports to it.",
+    Value = false,
+    Flag  = "autoClickerChest",
+    Callback = function(v)
+        ClickerState.Running = v
+        if v then ClickerState.Current = getClickerChest() end
+    end,
+})
+ChestsTab:Slider({
+    Title = "Check Delay",
+    Desc  = "Time to wait between scans for a new chest.",
+    Step  = 0.1,
+    Value = { Min = 0.1, Max = 3, Default = 0.5 },
+    Callback = function(v) ClickerState.Delay = v end,
+})
+
+local ChestsStatus = ChestsTab:Paragraph({ Title = "Status", Desc = "Idle" })
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            ChestsStatus:SetDesc(string.format(
+                "Collected: %d | Opened: %d | Failed: %d | %s",
+                TapChestState.Collected, TapChestState.Opened, TapChestState.Failed, TapChestState.Status
+            ))
+        end)
+    end
+end)
+
+-- ============================================================
+-- GAMES TAB
+-- ============================================================
+
+GamesTab:Section({ Title = "Auto Dig Perfect", Opened = true })
+GamesTab:Toggle({
+    Title = "Auto Dig Perfect",
+    Desc  = "Teleports to the dig site and hits every round at the perfect zone.",
+    Value = false,
+    Flag  = "autoDigPerfect",
+    Callback = function(v)
+        DigState.Running = v
+        if not v then cancelDigSession() end
+        if v then
+            DigState.Status = "Starting..."
+            Notify({Title = "Auto Dig", Content = "Starting", Icon = "circle-check", Duration = 2})
+        end
+    end,
+})
+GamesTab:Button({
+    Title = "Cancel Current Session",
+    Desc  = "Fires the cancel remote and clears local state.",
+    Icon  = "x",
+    Callback = function()
+        cancelDigSession()
+        DigState.Status = "Session cancelled"
+    end,
+})
+GamesTab:Button({
+    Title = "Reset Dig Stats",
+    Desc  = "Clears hit and game counters.",
+    Icon  = "refresh-cw",
+    Callback = function()
+        DigState.TotalHits = 0
+        DigState.TotalGames = 0
+        DigState.LastReward = nil
+        DigState.Status = "Stats reset"
+    end,
+})
+
+GamesTab:Section({ Title = "Auto Colosseum", Opened = false })
+local ColosseumToggle
+ColosseumToggle = GamesTab:Toggle({
+    Title = "Auto Colosseum",
+    Desc  = "Starts Pet Defense and auto-attacks the closest threat.",
+    Value = false,
+    Flag  = "autoColosseum",
+    Callback = function(v)
+        if v then
+            local ok = colosseumStart()
+            if not ok and ColosseumToggle then
+                pcall(function() ColosseumToggle:Set(false) end)
+                Notify({ Title = "Colosseum", Content = "Could not start", Icon = "x", Duration = 3 })
+            end
+        else
+            colosseumStop()
+        end
+    end,
+})
+GamesTab:Slider({
+    Title = "Attack Interval",
+    Desc  = "Time between attacks on the same opponent.",
+    Step  = 0.01,
+    Value = { Min = 0.05, Max = 1, Default = 0.15 },
+    Callback = function(v) ColosseumState.AttackInterval = v end,
+})
+GamesTab:Slider({
+    Title = "Critical Interval",
+    Desc  = "Time between critical hit attempts.",
+    Step  = 0.5,
+    Value = { Min = 3, Max = 15, Default = 7 },
+    Callback = function(v) ColosseumState.CriticalInterval = v end,
+})
+GamesTab:Paragraph({
+    Title = "Note",
+    Desc  = "Auto-start skips the client intro, so opponent models may not appear. Combat and rewards work normally.",
+})
+
+local GamesStatus = GamesTab:Paragraph({ Title = "Status", Desc = "Idle" })
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            GamesStatus:SetDesc(string.format(
+                "Dig: hits %d, games %d, last %s | Colosseum: %d waves",
+                DigState.TotalHits, DigState.TotalGames, tostring(DigState.LastReward or "-"), ColosseumState.Waves
+            ))
+        end)
+    end
+end)
+
+-- ============================================================
+-- MACHINES TAB
+-- ============================================================
+
+MachinesTab:Section({ Title = "Auto Honey Pot", Opened = true })
+
+local HoneyPotRecipeOptions = { "Auto" }
+local HoneyPotRecipeKeyByLabel = {}
+if HoneyPotConfig then
+    local seen = {}
+    for i, recipe in ipairs(HoneyPotConfig.Recipes) do
+        local output = HoneyPotConfig.Describe(recipe.Output)
+        local base = (output and output.Name) or recipe.Key
+        local label = base
+        if seen[base] then label = base .. " #" .. i end
+        seen[base] = true
+        HoneyPotRecipeKeyByLabel[label] = recipe.Key
+        table.insert(HoneyPotRecipeOptions, label)
+    end
+end
+
+MachinesTab:Toggle({
+    Title = "Auto Claim",
+    Desc  = "Claims any ready slot on the Honey Pot machine.",
+    Value = false,
+    Flag  = "autoClaimHoneyPot",
+    Callback = function(v) HoneyPotState.ClaimRunning = v end,
+})
+MachinesTab:Toggle({
+    Title = "Auto Craft",
+    Desc  = "Crafts into empty slots when ingredients are available.",
+    Value = false,
+    Flag  = "autoCraftHoneyPot",
+    Callback = function(v) HoneyPotState.CraftRunning = v end,
+})
+MachinesTab:Toggle({
+    Title = "Auto Teleport to Machine",
+    Desc  = "Teleports to the Honey Pot machine when out of range.",
+    Value = true,
+    Flag  = "autoTeleportHoneyPot",
+    Callback = function(v) HoneyPotState.AutoTeleport = v end,
+})
+MachinesTab:Dropdown({
+    Title  = "Recipe",
+    Desc   = "Auto picks the highest-rarity craftable recipe.",
+    Values = HoneyPotRecipeOptions,
+    Value  = "Auto",
+    Callback = function(v)
+        if v == "Auto" then
+            HoneyPotState.SelectedRecipe = "Auto"
+        else
+            HoneyPotState.SelectedRecipe = HoneyPotRecipeKeyByLabel[v] or "Auto"
+        end
+    end,
+})
+MachinesTab:Slider({
+    Title = "Craft Amount",
+    Desc  = "Max amount per craft request.",
+    Step  = 1,
+    Value = { Min = 1, Max = 50, Default = 1 },
+    Callback = function(v) HoneyPotState.CraftAmount = v end,
+})
+MachinesTab:Slider({
+    Title = "Action Delay",
+    Desc  = "Time between claim and craft actions.",
+    Step  = 0.1,
+    Value = { Min = 0.3, Max = 3, Default = 0.5 },
+    Callback = function(v) HoneyPotState.Delay = v end,
+})
+
+local MachinesStatus = MachinesTab:Paragraph({ Title = "Status", Desc = "Idle" })
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            MachinesStatus:SetDesc(string.format(
+                "Claimed: %d | Crafted: %d | Failed: %d | %s",
+                HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Failed, HoneyPotState.Status
+            ))
+        end)
+    end
+end)
+
+Notify({
+    Title = "Tap Simulator REBORN",
+    Content = "Loaded. Toggle anything to start.",
+    Icon = "check",
+    Duration = 5,
+})
