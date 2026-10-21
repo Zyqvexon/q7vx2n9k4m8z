@@ -140,11 +140,8 @@ local function TeleportTo(targetPos)
     return false
 end
 
--- ============================================================
--- FARM
--- ============================================================
-
-local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0, Status = "Idle" }
+-- FARM STATE
+local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0 }
 
 if TapRemote then
     task.spawn(function()
@@ -160,7 +157,7 @@ if TapRemote then
     end)
 end
 
-local RebirthState = { Selected = false, Highest = false, SelectedIndex = 1, Delay = 1, Count = 0, Status = "Idle" }
+local RebirthState = { Selected = false, Highest = false, SelectedIndex = 1, Delay = 1, Count = 0 }
 local RebirthOptions = {}
 local RebirthIndexByName = {}
 
@@ -209,7 +206,6 @@ if RebirthRemote and RebirthConfig then
                 if bestIdx > 0 then
                     pcall(function() RebirthRemote:FireServer({ Index = bestIdx }) end)
                     RebirthState.Count = RebirthState.Count + 1
-                    RebirthState.Status = "Rebirth " .. bestIdx .. " | total " .. RebirthState.Count
                 end
             elseif RebirthState.Selected then
                 local ok, amt = pcall(function() return RebirthConfig.GetAmountFromIndex(RebirthState.SelectedIndex) end)
@@ -218,7 +214,6 @@ if RebirthRemote and RebirthConfig then
                     if ok2 and price and coins >= price then
                         pcall(function() RebirthRemote:FireServer({ Index = RebirthState.SelectedIndex }) end)
                         RebirthState.Count = RebirthState.Count + 1
-                        RebirthState.Status = "Rebirth " .. RebirthState.SelectedIndex .. " | total " .. RebirthState.Count
                     end
                 end
             end
@@ -226,7 +221,7 @@ if RebirthRemote and RebirthConfig then
     end)
 end
 
-local JumpState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
+local JumpState = { Running = false, Delay = 1, Count = 0 }
 
 local function attemptBuyJump()
     if not PhysicalUpgradeConfig or not JumpRemote then return false end
@@ -273,14 +268,11 @@ task.spawn(function()
         if not JumpState.Running then continue end
         if attemptBuyJump() then
             JumpState.Count = JumpState.Count + 1
-            JumpState.Status = "Purchased | total " .. JumpState.Count
-        else
-            JumpState.Status = "Waiting for funds"
         end
     end
 end)
 
-local SkillState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
+local SkillState = { Running = false, Delay = 1, Count = 0 }
 
 task.spawn(function()
     while true do
@@ -291,7 +283,6 @@ task.spawn(function()
         if not data then continue end
         local unlocked = (data.SkillTree and data.SkillTree.Unlocked) or {}
         local gems = (data.Currencies and data.Currencies.Gems) or 0
-        local bought = false
         local function scan(node, parentUnlocked)
             if type(node) ~= "table" or not node.Name then return false end
             if unlocked[node.Name] or node.Origin then
@@ -308,7 +299,6 @@ task.spawn(function()
                         local ok5, res = pcall(function() return SkillTreeService:Unlock({ Name = node.Name }) end)
                         if ok5 and type(res) == "table" and res.Success then
                             SkillState.Count = SkillState.Count + 1
-                            SkillState.Status = "Unlocked " .. node.Name .. " | total " .. SkillState.Count
                             return true
                         end
                     end
@@ -317,13 +307,12 @@ task.spawn(function()
             return false
         end
         for _, tree in pairs(SkillTreeConfig) do
-            if scan(tree, true) then bought = true; break end
+            if scan(tree, true) then break end
         end
-        if not bought then SkillState.Status = "No affordable nodes" end
     end
 end)
 
-local QuestState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
+local QuestState = { Running = false, Delay = 1, Count = 0 }
 
 task.spawn(function()
     while true do
@@ -342,10 +331,7 @@ task.spawn(function()
                     if ClaimQuestRF then ok = pcall(function() ClaimQuestRF:InvokeServer({ Quest = name }) end)
                     elseif ClaimQuestRE then ok = pcall(function() ClaimQuestRE:FireServer({ Quest = name }) end)
                     end
-                    if ok then
-                        QuestState.Count = QuestState.Count + 1
-                        QuestState.Status = "Claimed " .. name .. " | total " .. QuestState.Count
-                    end
+                    if ok then QuestState.Count = QuestState.Count + 1 end
                     task.wait(0.1)
                 end
             end
@@ -353,33 +339,21 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- PETS
--- ============================================================
-
-local HatchCraftState = {
-    HatchRunning = false, CraftRunning = false,
+-- PETS STATE
+local HatchState = {
+    HatchRunning = false,
     SelectedEgg = nil, SelectedAmount = 1,
-    HatchDelay = 0.5, CraftDelay = 1,
-    PetsToUse = 6, SelectedMutation = "None",
+    HatchDelay = 0.5,
     isRequestPending = false,
-    lastHatchResultTime = 0, lastCraftResultTime = 0,
-    Hatched = 0, Crafted = 0, Status = "Idle",
+    lastHatchResultTime = 0,
+    Hatched = 0, Status = "Idle",
 }
 
 if EggService then
     pcall(function()
         EggService.EggHatchResult:Connect(function()
-            HatchCraftState.isRequestPending = false
-            HatchCraftState.lastHatchResultTime = os.clock()
-        end)
-    end)
-end
-if MachineService then
-    pcall(function()
-        MachineService.MachineCraftResult:Connect(function()
-            HatchCraftState.isRequestPending = false
-            HatchCraftState.lastCraftResultTime = os.clock()
+            HatchState.isRequestPending = false
+            HatchState.lastHatchResultTime = os.clock()
         end)
     end)
 end
@@ -390,6 +364,142 @@ local function getEggPos(eggName)
     local eggModel = eggsFolder:FindFirstChild(eggName)
     if not eggModel then return nil end
     return getPartPos(eggModel)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if HatchState.isRequestPending then continue end
+        if not HatchState.HatchRunning then continue end
+        if not (EggService and EggConfig and EggPricing) then continue end
+        local data = getData()
+        if not data then continue end
+        if os.clock() - HatchState.lastHatchResultTime < HatchState.HatchDelay then continue end
+        local invCount = 0
+        for _ in pairs((data.Pets and data.Pets.Owned) or {}) do invCount = invCount + 1 end
+        local limit = (data.Pets and data.Pets.StorageLimit) or math.huge
+        if invCount >= limit then continue end
+        if not HatchState.SelectedEgg or not EggConfig[HatchState.SelectedEgg] then continue end
+        local ok, price = pcall(function()
+            return EggPricing.GetTotal(data, HatchState.SelectedEgg, EggConfig[HatchState.SelectedEgg].Price, HatchState.SelectedAmount)
+        end)
+        local coins = (data.Currencies and data.Currencies.Coins) or 0
+        if not (ok and price and coins >= price) then continue end
+        if HatchState.SelectedAmount == 8 and GamepassPerks and BoostFormula then
+            local hasPerk = false
+            pcall(function() hasPerk = GamepassPerks.Has(data, "x8Egg") end)
+            local hasBoost = false
+            pcall(function() hasBoost = BoostFormula.HasType(data, "OctoHatch") end)
+            if not hasPerk and not hasBoost then
+                HatchState.Status = "x8 Gamepass required"
+                continue
+            end
+        end
+        local pos = getEggPos(HatchState.SelectedEgg)
+        if not pos then
+            HatchState.Status = "Egg not loaded"
+            continue
+        end
+        TeleportTo(pos)
+        HatchState.isRequestPending = true
+        pcall(function()
+            EggService.EggHatchRequested:Fire({
+                Egg = HatchState.SelectedEgg,
+                Count = HatchState.SelectedAmount,
+                Auto = true,
+                Seq = math.random(1, 100000),
+            })
+        end)
+        HatchState.Hatched = HatchState.Hatched + 1
+        HatchState.Status = "Hatched | total " .. HatchState.Hatched
+        task.delay(3, function() if HatchState.isRequestPending then HatchState.isRequestPending = false end end)
+    end
+end)
+
+local ItemState = {
+    BoostRunning = false, GiftRunning = false, TreatRunning = false, TotemRunning = false,
+    Delay = 1, SelectedBoosts = {}, SelectedGifts = {}, SelectedTreats = {}, SelectedTotems = {},
+    Used = 0,
+}
+
+task.spawn(function()
+    while true do
+        task.wait(ItemState.Delay)
+        local data = getData()
+        if not data then continue end
+        local function hasItem(name)
+            local items = (data.Items and data.Items.Owned) or {}
+            return (items[name] or 0) > 0
+        end
+        if ItemState.BoostRunning and BoostRemote then
+            local boosts = data.Boosts or {}
+            for _, name in ipairs(ItemState.SelectedBoosts) do
+                if (boosts[name] or 0) > 0 then
+                    local ok = pcall(function() BoostRemote:InvokeServer(name) end)
+                    if ok then ItemState.Used = ItemState.Used + 1 end
+                    break
+                end
+            end
+        end
+        if ItemState.GiftRunning and GiftController then
+            for _, name in ipairs(ItemState.SelectedGifts) do
+                if hasItem(name) then
+                    local ok = pcall(function() GiftController:Open(name, 1) end)
+                    if ok then ItemState.Used = ItemState.Used + 1 end
+                    break
+                end
+            end
+        end
+        if ItemState.TreatRunning and ItemService then
+            local petId = nil
+            for id in pairs((data.Pets and data.Pets.Owned) or {}) do petId = id; break end
+            if petId then
+                for _, name in ipairs(ItemState.SelectedTreats) do
+                    if hasItem(name) then
+                        local ok = pcall(function()
+                            ItemService:UseOnPet({ Item = name, PetId = petId, Amount = 1 })
+                        end)
+                        if ok then ItemState.Used = ItemState.Used + 1 end
+                        break
+                    end
+                end
+            end
+        end
+        if ItemState.TotemRunning and ItemService then
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                for _, name in ipairs(ItemState.SelectedTotems) do
+                    if hasItem(name) then
+                        local ok = pcall(function()
+                            ItemService:PlaceTotem({ TotemName = name, Position = hrp.Position + hrp.CFrame.LookVector * 5 })
+                        end)
+                        if ok then ItemState.Used = ItemState.Used + 1 end
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- CRAFT STATE (Golden Pets + Honey Pot)
+local CraftState = {
+    GoldenRunning = false,
+    PetsToUse = 6,
+    SelectedMutation = "None",
+    isRequestPending = false,
+    lastCraftResultTime = 0,
+    GoldenCrafted = 0,
+    GoldenStatus = "Idle",
+}
+
+if MachineService then
+    pcall(function()
+        MachineService.MachineCraftResult:Connect(function()
+            CraftState.isRequestPending = false
+            CraftState.lastCraftResultTime = os.clock()
+        end)
+    end)
 end
 
 local function getGoldenMachinePos()
@@ -419,766 +529,40 @@ end
 task.spawn(function()
     while true do
         task.wait(0.1)
-        if HatchCraftState.isRequestPending then continue end
-        if not (HatchCraftState.HatchRunning or HatchCraftState.CraftRunning) then continue end
+        if CraftState.isRequestPending then continue end
+        if not CraftState.GoldenRunning then continue end
+        if not MachineService then continue end
         local data = getData()
         if not data then continue end
-        local now = os.clock()
-        local crafted = false
-
-        if HatchCraftState.CraftRunning and MachineService and (now - HatchCraftState.lastCraftResultTime >= HatchCraftState.CraftDelay) then
-            local groups = {}
-            local owned = (data.Pets and data.Pets.Owned) or {}
-            for id, pet in pairs(owned) do
-                if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen and not pet.Enchant and not pet.Signature then
-                    if petMatchesMutation(pet, HatchCraftState.SelectedMutation) then
-                        if not groups[pet.Name] then groups[pet.Name] = {} end
-                        table.insert(groups[pet.Name], id)
-                    end
-                end
-            end
-            for _, ids in pairs(groups) do
-                if #ids >= HatchCraftState.PetsToUse then
-                    local selected = {}
-                    for i = 1, HatchCraftState.PetsToUse do table.insert(selected, ids[i]) end
-                    HatchCraftState.isRequestPending = true
-                    local pos = getGoldenMachinePos()
-                    if pos then TeleportTo(pos) end
-                    pcall(function()
-                        MachineService.MachineCraftRequested:Fire({ Machine = "Golden", PetIds = selected })
-                    end)
-                    HatchCraftState.Crafted = HatchCraftState.Crafted + 1
-                    HatchCraftState.Status = "Crafted | total " .. HatchCraftState.Crafted
-                    task.delay(5, function() if HatchCraftState.isRequestPending then HatchCraftState.isRequestPending = false end end)
-                    crafted = true
-                    break
+        if os.clock() - CraftState.lastCraftResultTime < 1 then continue end
+        local groups = {}
+        local owned = (data.Pets and data.Pets.Owned) or {}
+        for id, pet in pairs(owned) do
+            if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen and not pet.Enchant and not pet.Signature then
+                if petMatchesMutation(pet, CraftState.SelectedMutation) then
+                    if not groups[pet.Name] then groups[pet.Name] = {} end
+                    table.insert(groups[pet.Name], id)
                 end
             end
         end
-
-        if not crafted and HatchCraftState.HatchRunning and EggService and EggConfig and EggPricing and (now - HatchCraftState.lastHatchResultTime >= HatchCraftState.HatchDelay) then
-            local invCount = 0
-            for _ in pairs((data.Pets and data.Pets.Owned) or {}) do invCount = invCount + 1 end
-            local limit = (data.Pets and data.Pets.StorageLimit) or math.huge
-            if invCount < limit then
-                if HatchCraftState.SelectedEgg and EggConfig[HatchCraftState.SelectedEgg] then
-                    local ok, price = pcall(function()
-                        return EggPricing.GetTotal(data, HatchCraftState.SelectedEgg, EggConfig[HatchCraftState.SelectedEgg].Price, HatchCraftState.SelectedAmount)
-                    end)
-                    local coins = (data.Currencies and data.Currencies.Coins) or 0
-                    if ok and price and coins >= price then
-                        if HatchCraftState.SelectedAmount == 8 and GamepassPerks and BoostFormula then
-                            local hasPerk = false
-                            pcall(function() hasPerk = GamepassPerks.Has(data, "x8Egg") end)
-                            local hasBoost = false
-                            pcall(function() hasBoost = BoostFormula.HasType(data, "OctoHatch") end)
-                            if not hasPerk and not hasBoost then
-                                HatchCraftState.Status = "x8 Gamepass required"
-                                continue
-                            end
-                        end
-                        local pos = getEggPos(HatchCraftState.SelectedEgg)
-                        if pos then
-                            TeleportTo(pos)
-                            HatchCraftState.isRequestPending = true
-                            pcall(function()
-                                EggService.EggHatchRequested:Fire({
-                                    Egg = HatchCraftState.SelectedEgg,
-                                    Count = HatchCraftState.SelectedAmount,
-                                    Auto = true,
-                                    Seq = math.random(1, 100000),
-                                })
-                            end)
-                            HatchCraftState.Hatched = HatchCraftState.Hatched + 1
-                            HatchCraftState.Status = "Hatched | total " .. HatchCraftState.Hatched
-                            task.delay(3, function() if HatchCraftState.isRequestPending then HatchCraftState.isRequestPending = false end end)
-                        else
-                            HatchCraftState.Status = "Egg not loaded"
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
-
-local ItemState = {
-    BoostRunning = false, GiftRunning = false, TreatRunning = false, TotemRunning = false,
-    Delay = 1, SelectedBoosts = {}, SelectedGifts = {}, SelectedTreats = {}, SelectedTotems = {},
-    Status = "Idle", Used = 0,
-}
-
-task.spawn(function()
-    while true do
-        task.wait(ItemState.Delay)
-        local data = getData()
-        if not data then continue end
-        local function hasItem(name)
-            local items = (data.Items and data.Items.Owned) or {}
-            return (items[name] or 0) > 0
-        end
-        if ItemState.BoostRunning and BoostRemote then
-            local boosts = data.Boosts or {}
-            for _, name in ipairs(ItemState.SelectedBoosts) do
-                if (boosts[name] or 0) > 0 then
-                    local ok = pcall(function() BoostRemote:InvokeServer(name) end)
-                    if ok then
-                        ItemState.Used = ItemState.Used + 1
-                        ItemState.Status = "Boost " .. name
-                    end
-                    break
-                end
-            end
-        end
-        if ItemState.GiftRunning and GiftController then
-            for _, name in ipairs(ItemState.SelectedGifts) do
-                if hasItem(name) then
-                    local ok = pcall(function() GiftController:Open(name, 1) end)
-                    if ok then
-                        ItemState.Used = ItemState.Used + 1
-                        ItemState.Status = "Gift " .. name
-                    end
-                    break
-                end
-            end
-        end
-        if ItemState.TreatRunning and ItemService then
-            local petId = nil
-            for id in pairs((data.Pets and data.Pets.Owned) or {}) do petId = id; break end
-            if petId then
-                for _, name in ipairs(ItemState.SelectedTreats) do
-                    if hasItem(name) then
-                        local ok = pcall(function()
-                            ItemService:UseOnPet({ Item = name, PetId = petId, Amount = 1 })
-                        end)
-                        if ok then
-                            ItemState.Used = ItemState.Used + 1
-                            ItemState.Status = "Treat " .. name
-                        end
-                        break
-                    end
-                end
-            end
-        end
-        if ItemState.TotemRunning and ItemService then
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                for _, name in ipairs(ItemState.SelectedTotems) do
-                    if hasItem(name) then
-                        local ok = pcall(function()
-                            ItemService:PlaceTotem({ TotemName = name, Position = hrp.Position + hrp.CFrame.LookVector * 5 })
-                        end)
-                        if ok then
-                            ItemState.Used = ItemState.Used + 1
-                            ItemState.Status = "Totem " .. name
-                        end
-                        break
-                    end
-                end
-            end
-        end
-    end
-end)
-
--- ============================================================
--- CHESTS
--- ============================================================
-
-local TapChestState = {
-    CollectRunning = false, OpenRunning = false, Mutex = false,
-    Delay = 0.5, Collected = 0, Opened = 0, Failed = 0, Status = "Idle",
-}
-
-local function getAttrFirst(model, names)
-    for _, n in ipairs(names) do
-        local v = model:GetAttribute(n)
-        if v ~= nil then return v end
-    end
-    return nil
-end
-
-local function getChestId(model)
-    local v = getAttrFirst(model, {"TS2TapChestId", "TapChestId", "ChestId", "Id", "TS2TapChestID", "TapChestID", "ChestID", "ID"})
-    return type(v) == "string" and v or nil
-end
-
-local function getChestPos(model)
-    if not TapChestConfig then return getPartPos(model) end
-    local front = getAttrFirst(model, {"TS2TapChestFront", "TapChestFront", "Front"})
-    local size = getAttrFirst(model, {"TS2TapChestSize", "TapChestSize", "Size"})
-    if typeof(front) == "CFrame" then
-        if typeof(size) == "Vector3" then
-            local base = front.Position - Vector3.new(0, 1, 0) * size.Y * 0.5
-            return base + front.LookVector * (size.Z * 0.5 + TapChestConfig.PromptInset)
-                + Vector3.new(0, 1, 0) * TapChestConfig.PromptHeight
-        end
-        return front.Position
-    end
-    return getPartPos(model)
-end
-
-local function isChestReady(model)
-    if not CollectionService:HasTag(model, "Interactable") then return false end
-    return model:GetAttribute("InteractableId") == "TapChest"
-end
-
-local function getReadyChests()
-    local list = {}
-    if not TapChestConfig then return list end
-    for _, model in CollectionService:GetTagged(TapChestConfig.Tag) do
-        if model:IsA("Model") and model.Parent and isChestReady(model) then
-            table.insert(list, model)
-        end
-    end
-    return list
-end
-
-local function claimChestDirect(chestId)
-    if not TapChestService then return nil end
-    local holder = {}
-    task.spawn(function()
-        local ok, res = pcall(function() return TapChestService:Claim(chestId) end)
-        if not ok then res = nil end
-        holder.Result = res
-        holder.Done = true
-    end)
-    local deadline = os.clock() + 6
-    while not holder.Done and os.clock() < deadline do task.wait() end
-    return holder.Result
-end
-
-local function processTapChest(model, timeout)
-    local pos = getChestPos(model)
-    if not pos then return false, "no position" end
-    if not TeleportTo(pos) then return false, "unreachable" end
-    if TapChestController then
-        pcall(function() TapChestController:Interact(model) end)
-        local deadline = os.clock() + (timeout or 20)
-        while os.clock() < deadline do
-            if not isChestReady(model) then return true, "opened" end
-            task.wait(0.5)
-        end
-    end
-    local chestId = getChestId(model)
-    if chestId then
-        local result = claimChestDirect(chestId)
-        if type(result) == "table" and result.Success then return true, result.Coins or 0 end
-    end
-    return false, "failed"
-end
-
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if not (TapChestState.CollectRunning or TapChestState.OpenRunning) or TapChestState.Mutex then continue end
-        TapChestState.Mutex = true
-        local ok, err = pcall(function()
-            local ready = getReadyChests()
-            if #ready == 0 then
-                TapChestState.Status = "No ready chests"
-                return
-            end
-            for _, model in ready do
-                if not (TapChestState.CollectRunning or TapChestState.OpenRunning) then break end
-                local timeout = TapChestState.OpenRunning and 25 or 20
-                local success, info = processTapChest(model, timeout)
-                if success then
-                    if TapChestState.CollectRunning then
-                        TapChestState.Collected = TapChestState.Collected + 1
-                        TapChestState.Status = "Collected " .. TapChestState.Collected
-                    end
-                    if TapChestState.OpenRunning then
-                        TapChestState.Opened = TapChestState.Opened + 1
-                        TapChestState.Status = "Opened " .. TapChestState.Opened
-                    end
-                else
-                    TapChestState.Failed = TapChestState.Failed + 1
-                    TapChestState.Status = "Failed: " .. tostring(info)
-                end
-                task.wait(TapChestState.Delay)
-            end
-        end)
-        TapChestState.Mutex = false
-        if not ok then warn("[TapChest] " .. tostring(err)) end
-    end
-end)
-
-local ClickerState = { Running = false, Delay = 0.5, Current = nil, Status = "Idle" }
-
-local function getClickerChest()
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if obj:IsA("Model") and obj.Name == "ClickerChest" then
-            return obj
-        end
-    end
-    return nil
-end
-
-task.spawn(function()
-    while true do
-        task.wait(ClickerState.Delay)
-        if not ClickerState.Running then continue end
-        if not ClickerState.Current or not ClickerState.Current.Parent then
-            ClickerState.Current = getClickerChest()
-        end
-        if ClickerState.Current then
-            local pos = getPartPos(ClickerState.Current)
-            if pos then
-                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if hrp and (hrp.Position - pos).Magnitude > 10 then
-                    TeleportTo(pos)
-                    ClickerState.Status = "Teleported to chest"
-                end
-            end
-        else
-            ClickerState.Status = "Searching..."
-        end
-    end
-end)
-
--- ============================================================
--- GAMES: Auto Dig
--- ============================================================
-
-local DigState = {
-    Running = false, Session = nil, LastHitTime = 0,
-    TotalHits = 0, TotalGames = 0, LastReward = nil, Status = "Idle",
-}
-
-local MinHitInterval = 0.2
-if DigConfig and tonumber(DigConfig.MinHitInterval) then
-    MinHitInterval = tonumber(DigConfig.MinHitInterval)
-end
-
-local function solveRawForCursor(target)
-    if target <= 0.5 then
-        return (-1 + math.sqrt(1 + 16 * target)) / 4
-    else
-        local u = (-1 + math.sqrt(1 + 16 * (1 - target))) / 4
-        return 1 - u
-    end
-end
-
-local function nextTimeForRaw(round, r)
-    local speed = round.Speed or 1
-    if speed <= 0 then return 0 end
-    local k = 0.6 * speed
-    local phase = round.Phase or 0
-    local eAsc  = ((r - phase) % 2) / k
-    local eDesc = ((2 - r - phase) % 2) / k
-    return math.min(eAsc, eDesc)
-end
-
-local function computePerfectTime(round, minTime)
-    if not round or not round.Speed or round.Speed <= 0 or not round.Center then return nil end
-    local r = solveRawForCursor(round.Center)
-    local elapsed = nextTimeForRaw(round, r)
-    local target = (round.Epoch or 0) + elapsed
-    local period = 2 / (0.6 * round.Speed)
-    local safety = 0
-    while target < minTime and safety < 1000 do
-        target = target + period
-        safety = safety + 1
-    end
-    return target
-end
-
-local function getDigZone()
-    if DigWorld and type(DigWorld.GetSite) == "function" then
-        local ok, site = pcall(DigWorld.GetSite)
-        if ok and site then
-            local zone = site:FindFirstChild("DigZone")
-            if zone then return zone end
-        end
-    end
-    local islands = Workspace:FindFirstChild("Ts2Islands")
-    if not islands then return nil end
-    local autumn = islands:FindFirstChild("Autumn")
-    if autumn then
-        local site = autumn:FindFirstChild("Digsite")
-        if site then
-            local zone = site:FindFirstChild("DigZone")
-            if zone then return zone end
-        end
-    end
-    for _, island in ipairs(islands:GetChildren()) do
-        local site = island:FindFirstChild("Digsite")
-        if site then
-            local zone = site:FindFirstChild("DigZone")
-            if zone then return zone end
-        end
-    end
-    return nil
-end
-
-local function isInDigZone()
-    if LocalPlayer:GetAttribute("AtDigsite") == true then return true end
-    local zone = getDigZone()
-    if not zone then return false end
-    local char = LocalPlayer.Character
-    if not char then return false end
-    if DigWorld and type(DigWorld.Contains) == "function" then
-        local ok, res = pcall(function() return DigWorld.Contains(zone, char) end)
-        if ok and res then return true end
-    end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local pos = getPartPos(zone)
-    if hrp and pos then return (hrp.Position - pos).Magnitude <= 30 end
-    return false
-end
-
-local function cancelDigSession()
-    if DigState.Session and DigState.Session.Id and DigComm then
-        local sid = DigState.Session.Id
-        task.spawn(function() pcall(function() DigComm:Cancel(sid) end) end)
-    end
-    DigState.Session = nil
-end
-
-local function processOneDigGame()
-    local zone = getDigZone()
-    if not zone then
-        DigState.Status = "Dig site not found"
-        return true
-    end
-    if not isInDigZone() then
-        local pos = getPartPos(zone)
-        if not pos then
-            DigState.Status = "Zone has no position"
-            return true
-        end
-        DigState.Status = "Teleporting to site..."
-        TeleportTo(pos)
-        local deadline = os.clock() + 3
-        while os.clock() < deadline do
-            if not DigState.Running then return false end
-            if isInDigZone() then break end
-            task.wait(0.1)
-        end
-        if not isInDigZone() then
-            DigState.Status = "Not detected at site"
-            return true
-        end
-    end
-    local ok, resp = pcall(function() return DigComm:Begin() end)
-    if not ok or not resp then
-        DigState.Status = "Begin failed"
-        task.wait(0.5)
-        return true
-    end
-    if resp.Error then
-        if resp.Error == "Cooldown" then
-            local mins = math.ceil((resp.Remaining or 0) / 60)
-            DigState.Status = string.format("Cooldown %dm", mins)
-            Notify({Title = "Auto Dig", Content = "Out of digs. Wait " .. mins .. " min.", Icon = "clock", Duration = 4})
-            DigState.Running = false
-            return false
-        end
-        DigState.Status = "Begin error: " .. tostring(resp.Error)
-        task.wait(1)
-        return true
-    end
-    DigState.Session = resp
-    while DigState.Running and DigState.Session do
-        local session = DigState.Session
-        if not session.Round then
-            DigState.Session = nil
-            break
-        end
-        if session.Complete then
-            DigState.Session = nil
-            break
-        end
-        local now = Workspace:GetServerTimeNow()
-        local minTime = math.max(now + 0.02, DigState.LastHitTime + MinHitInterval + 0.02)
-        local target = computePerfectTime(session.Round, minTime)
-        if not target then
-            DigState.Session = nil
-            DigState.Status = "Invalid round"
-            break
-        end
-        while DigState.Running do
-            local t = Workspace:GetServerTimeNow()
-            if t >= target - 0.005 then break end
-            local remaining = target - t
-            if remaining > 0.05 then task.wait(math.min(remaining - 0.02, 0.1))
-            else task.wait() end
-        end
-        if not DigState.Running then return false end
-        local hitTime = Workspace:GetServerTimeNow()
-        local hOk, hResp = pcall(function()
-            return DigComm:Hit(session.Id, session.Round.Sequence, hitTime)
-        end)
-        if not hOk or not hResp then
-            DigState.Status = "Hit failed"
-            task.wait(0.5)
-            DigState.Session = nil
-            break
-        end
-        if hResp.Error then
-            if hResp.Error == "NoSession" or hResp.Error == "StaleRound" then
-                DigState.Session = nil
-                break
-            elseif hResp.Error == "Cooldown" then
-                local mins = math.ceil((hResp.Remaining or 0) / 60)
-                DigState.Status = string.format("Cooldown %dm", mins)
-                DigState.Running = false
-                return false
-            elseif hResp.Error == "TooSoon" then
-                task.wait(0.1)
-            elseif hResp.Error == "Busy" then
-                task.wait(0.2)
-            else
-                DigState.Session = nil
-                DigState.Status = "Error: " .. tostring(hResp.Error)
-                task.wait(0.5)
+        for _, ids in pairs(groups) do
+            if #ids >= CraftState.PetsToUse then
+                local selected = {}
+                for i = 1, CraftState.PetsToUse do table.insert(selected, ids[i]) end
+                CraftState.isRequestPending = true
+                local pos = getGoldenMachinePos()
+                if pos then TeleportTo(pos) end
+                pcall(function()
+                    MachineService.MachineCraftRequested:Fire({ Machine = "Golden", PetIds = selected })
+                end)
+                CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
+                CraftState.GoldenStatus = "Crafted | total " .. CraftState.GoldenCrafted
+                task.delay(5, function() if CraftState.isRequestPending then CraftState.isRequestPending = false end end)
                 break
             end
-        else
-            DigState.LastHitTime = hitTime
-            DigState.TotalHits = DigState.TotalHits + 1
-            if hResp.Complete then
-                DigState.TotalGames = DigState.TotalGames + 1
-                DigState.LastReward = hResp.Reward
-                DigState.Status = "Done: " .. tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1)
-                DigState.Session = nil
-                Notify({Title = "Dig Complete", Content = tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1), Icon = "check", Duration = 3})
-                task.wait(1.1)
-                break
-            else
-                DigState.Session = hResp
-                DigState.Status = "Hit " .. DigState.TotalHits
-            end
         end
     end
-    return true
-end
-
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if not DigState.Running then continue end
-        if not DigComm then
-            DigState.Status = "Service unavailable"
-            DigState.Running = false
-            continue
-        end
-        processOneDigGame()
-    end
-    cancelDigSession()
 end)
-
--- ============================================================
--- GAMES: Auto Colosseum (FIXED)
--- ============================================================
-
-local ColosseumState = {
-    Active = false, Opponents = {},
-    AttackInterval = 0.15, CriticalInterval = 7,
-    Attacks = 0, Kills = 0, Criticals = 0, Waves = 0, Status = "Idle",
-}
-
-local ColosseumToggle
-
-if ColosseumNetwork then
-    pcall(function()
-        ColosseumNetwork:BindEvents({
-            ["WaveDefenseOpponentSpawned"] = function(data)
-                if not ColosseumState.Active or not data or not data.Id then return end
-                ColosseumState.Opponents[data.Id] = {
-                    Id = data.Id, ArrivalTime = data.ArrivalTime, SpawnTime = data.SpawnTime,
-                    Health = data.Health or data.MaxHealth, MaxHealth = data.MaxHealth,
-                }
-            end,
-            ["WaveDefenseOpponentDefeated"] = function(data)
-                if not data or not data.OpponentId then return end
-                ColosseumState.Opponents[data.OpponentId] = nil
-                ColosseumState.Kills = ColosseumState.Kills + 1
-            end,
-            ["WaveDefenseHeartLost"] = function(data)
-                if not data or not data.OpponentId then return end
-                ColosseumState.Opponents[data.OpponentId] = nil
-            end,
-            ["WaveDefenseWaveComplete"] = function()
-                ColosseumState.Waves = ColosseumState.Waves + 1
-                ColosseumState.Opponents = {}
-            end,
-            ["WaveDefenseGameOver"] = function()
-                if ColosseumState.Active then
-                    ColosseumState.Active = false
-                    ColosseumState.Status = "Game over"
-                    if ColosseumToggle then
-                        pcall(function() ColosseumToggle:Set(false) end)
-                    end
-                    task.spawn(function()
-                        pcall(function() ColosseumNetwork:InvokeServer("ReturnFromArena") end)
-                    end)
-                end
-            end,
-        })
-    end)
-
-    local function colosseumPickTarget()
-        local targetId, minArrival = nil, math.huge
-        for id, opp in pairs(ColosseumState.Opponents) do
-            if opp.ArrivalTime and opp.ArrivalTime < minArrival then
-                minArrival = opp.ArrivalTime
-                targetId = id
-            end
-        end
-        return targetId
-    end
-
-    local function colosseumApplyResponse(targetId, resp)
-        if not resp or not resp.Health then return false end
-        if resp.Defeated then
-            ColosseumState.Opponents[targetId] = nil
-        elseif ColosseumState.Opponents[targetId] then
-            ColosseumState.Opponents[targetId].Health = resp.Health
-            if resp.NewArrivalTime then
-                ColosseumState.Opponents[targetId].ArrivalTime = resp.NewArrivalTime
-            end
-        end
-        return true
-    end
-
-    task.spawn(function()
-        while true do
-            task.wait(ColosseumState.AttackInterval)
-            if not ColosseumState.Active then continue end
-            local targetId = colosseumPickTarget()
-            if not targetId then continue end
-            local ok, resp = pcall(function() return ColosseumNetwork:InvokeServer("AttackOpponent", targetId) end)
-            if ok and colosseumApplyResponse(targetId, resp) then
-                ColosseumState.Attacks = ColosseumState.Attacks + 1
-            end
-        end
-    end)
-
-    task.spawn(function()
-        while true do
-            task.wait(ColosseumState.CriticalInterval)
-            if not ColosseumState.Active then continue end
-            local targetId = colosseumPickTarget()
-            if not targetId then continue end
-            local ok, resp = pcall(function() return ColosseumNetwork:InvokeServer("CriticalAttackOpponent", targetId) end)
-            if ok and colosseumApplyResponse(targetId, resp) then
-                ColosseumState.Criticals = ColosseumState.Criticals + 1
-            end
-        end
-    end)
-end
-
-local function getArenaPosition()
-    local gameFolder = Workspace:FindFirstChild("Game")
-    if not gameFolder then return nil end
-    local arena = gameFolder:FindFirstChild("WaveDefense")
-    if not arena then return nil end
-    local ok, cf = pcall(function() return arena:GetBoundingBox() end)
-    if ok and cf then return cf.Position end
-    return getPartPos(arena)
-end
-
-local function isArenaTagged()
-    local gameFolder = Workspace:FindFirstChild("Game")
-    if not gameFolder then return false end
-    local arena = gameFolder:FindFirstChild("WaveDefense")
-    if not arena then return false end
-    return arena:GetAttribute("TaggedArena") == true
-end
-
-local function colosseumStart()
-    if not ColosseumNetwork then return false, "Network unavailable" end
-    if ColosseumState.Active then return true end
-
-    ColosseumState.Status = "Starting..."
-    ColosseumState.Opponents = {}
-    ColosseumState.Attacks = 0
-    ColosseumState.Kills = 0
-    ColosseumState.Criticals = 0
-    ColosseumState.Waves = 0
-
-    if not isArenaTagged() then
-        local arenaPos = getArenaPosition()
-        if arenaPos then
-            ColosseumState.Status = "Teleporting to arena..."
-            TeleportTo(arenaPos)
-        end
-        local deadline = os.clock() + 5
-        while not isArenaTagged() and os.clock() < deadline do
-            task.wait(0.1)
-        end
-        if not isArenaTagged() then
-            ColosseumState.Status = "Not at arena"
-            return false, "Not at arena"
-        end
-    end
-
-    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
-        pcall(function() ColosseumAdapter:SetActive(true) end)
-        task.wait(0.25)
-    end
-
-    local ok, resp = pcall(function()
-        return ColosseumNetwork:InvokeServer("StartWaveDefense")
-    end)
-
-    if not ok then
-        ColosseumState.Status = "Invoke error"
-        return false, "Invoke error"
-    end
-    if not resp then
-        ColosseumState.Status = "No response"
-        return false, "No response"
-    end
-
-    if type(resp) == "table" then
-        if resp.OnCooldown or resp.Error then
-            local errMsg = tostring(resp.Error or "On cooldown")
-            if resp.Remaining then
-                errMsg = errMsg .. " (" .. math.ceil(resp.Remaining / 60) .. "m)"
-            end
-            ColosseumState.Status = errMsg
-            return false, errMsg
-        end
-    end
-
-    ColosseumState.Active = true
-    ColosseumState.Status = "Playing"
-
-    if type(resp) == "table" and type(resp.PendingSpawns) == "table" then
-        for _, spawn in ipairs(resp.PendingSpawns) do
-            if type(spawn) == "table" and spawn.Id then
-                ColosseumState.Opponents[spawn.Id] = {
-                    Id = spawn.Id, ArrivalTime = spawn.ArrivalTime, SpawnTime = spawn.SpawnTime,
-                    Health = spawn.MaxHealth, MaxHealth = spawn.MaxHealth,
-                }
-            end
-        end
-    end
-
-    return true
-end
-
-local function colosseumStop()
-    ColosseumState.Active = false
-    ColosseumState.Status = "Stopping..."
-    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
-        pcall(function() ColosseumAdapter:SetActive(false) end)
-    end
-    if ColosseumNetwork then
-        task.spawn(function()
-            pcall(function() ColosseumNetwork:InvokeServer("EndWaveDefense") end)
-            task.wait(0.5)
-            pcall(function() ColosseumNetwork:InvokeServer("ReturnFromArena") end)
-            ColosseumState.Status = "Stopped"
-        end)
-    end
-end
-
--- ============================================================
--- MACHINES
--- ============================================================
 
 local HoneyPotState = {
     ClaimRunning = false, CraftRunning = false, AutoTeleport = true,
@@ -1333,10 +717,575 @@ if HoneyPotService and HoneyPotConfig then
     end)
 end
 
--- ============================================================
--- WINDOW
--- ============================================================
+-- CHESTS
+local TapChestState = {
+    CollectRunning = false, OpenRunning = false, Mutex = false,
+    Delay = 0.5, Collected = 0, Opened = 0, Failed = 0, Status = "Idle",
+}
 
+local function getAttrFirst(model, names)
+    for _, n in ipairs(names) do
+        local v = model:GetAttribute(n)
+        if v ~= nil then return v end
+    end
+    return nil
+end
+
+local function getChestId(model)
+    local v = getAttrFirst(model, {"TS2TapChestId", "TapChestId", "ChestId", "Id", "TS2TapChestID", "TapChestID", "ChestID", "ID"})
+    return type(v) == "string" and v or nil
+end
+
+local function getChestPos(model)
+    if not TapChestConfig then return getPartPos(model) end
+    local front = getAttrFirst(model, {"TS2TapChestFront", "TapChestFront", "Front"})
+    local size = getAttrFirst(model, {"TS2TapChestSize", "TapChestSize", "Size"})
+    if typeof(front) == "CFrame" then
+        if typeof(size) == "Vector3" then
+            local base = front.Position - Vector3.new(0, 1, 0) * size.Y * 0.5
+            return base + front.LookVector * (size.Z * 0.5 + TapChestConfig.PromptInset)
+                + Vector3.new(0, 1, 0) * TapChestConfig.PromptHeight
+        end
+        return front.Position
+    end
+    return getPartPos(model)
+end
+
+local function isChestReady(model)
+    if not CollectionService:HasTag(model, "Interactable") then return false end
+    return model:GetAttribute("InteractableId") == "TapChest"
+end
+
+local function getReadyChests()
+    local list = {}
+    if not TapChestConfig then return list end
+    for _, model in CollectionService:GetTagged(TapChestConfig.Tag) do
+        if model:IsA("Model") and model.Parent and isChestReady(model) then
+            table.insert(list, model)
+        end
+    end
+    return list
+end
+
+local function claimChestDirect(chestId)
+    if not TapChestService then return nil end
+    local holder = {}
+    task.spawn(function()
+        local ok, res = pcall(function() return TapChestService:Claim(chestId) end)
+        if not ok then res = nil end
+        holder.Result = res
+        holder.Done = true
+    end)
+    local deadline = os.clock() + 6
+    while not holder.Done and os.clock() < deadline do task.wait() end
+    return holder.Result
+end
+
+local function processTapChest(model, timeout)
+    local pos = getChestPos(model)
+    if not pos then return false, "no position" end
+    if not TeleportTo(pos) then return false, "unreachable" end
+    if TapChestController then
+        pcall(function() TapChestController:Interact(model) end)
+        local deadline = os.clock() + (timeout or 20)
+        while os.clock() < deadline do
+            if not isChestReady(model) then return true, "opened" end
+            task.wait(0.5)
+        end
+    end
+    local chestId = getChestId(model)
+    if chestId then
+        local result = claimChestDirect(chestId)
+        if type(result) == "table" and result.Success then return true, result.Coins or 0 end
+    end
+    return false, "failed"
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if not (TapChestState.CollectRunning or TapChestState.OpenRunning) or TapChestState.Mutex then continue end
+        TapChestState.Mutex = true
+        local ok, err = pcall(function()
+            local ready = getReadyChests()
+            if #ready == 0 then
+                TapChestState.Status = "No ready chests"
+                return
+            end
+            for _, model in ready do
+                if not (TapChestState.CollectRunning or TapChestState.OpenRunning) then break end
+                local timeout = TapChestState.OpenRunning and 25 or 20
+                local success, info = processTapChest(model, timeout)
+                if success then
+                    if TapChestState.CollectRunning then
+                        TapChestState.Collected = TapChestState.Collected + 1
+                        TapChestState.Status = "Collected " .. TapChestState.Collected
+                    end
+                    if TapChestState.OpenRunning then
+                        TapChestState.Opened = TapChestState.Opened + 1
+                        TapChestState.Status = "Opened " .. TapChestState.Opened
+                    end
+                else
+                    TapChestState.Failed = TapChestState.Failed + 1
+                    TapChestState.Status = "Failed: " .. tostring(info)
+                end
+                task.wait(TapChestState.Delay)
+            end
+        end)
+        TapChestState.Mutex = false
+        if not ok then warn("[TapChest] " .. tostring(err)) end
+    end
+end)
+
+local ClickerState = { Running = false, Delay = 0.5, Current = nil }
+
+local function getClickerChest()
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if obj:IsA("Model") and obj.Name == "ClickerChest" then return obj end
+    end
+    return nil
+end
+
+task.spawn(function()
+    while true do
+        task.wait(ClickerState.Delay)
+        if not ClickerState.Running then continue end
+        if not ClickerState.Current or not ClickerState.Current.Parent then
+            ClickerState.Current = getClickerChest()
+        end
+        if ClickerState.Current then
+            local pos = getPartPos(ClickerState.Current)
+            if pos then
+                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if hrp and (hrp.Position - pos).Magnitude > 10 then TeleportTo(pos) end
+            end
+        end
+    end
+end)
+
+-- GAMES: DIG
+local DigState = {
+    Running = false, Session = nil, LastHitTime = 0,
+    TotalHits = 0, TotalGames = 0, LastReward = nil, Status = "Idle",
+}
+
+local MinHitInterval = 0.2
+if DigConfig and tonumber(DigConfig.MinHitInterval) then
+    MinHitInterval = tonumber(DigConfig.MinHitInterval)
+end
+
+local function solveRawForCursor(target)
+    if target <= 0.5 then
+        return (-1 + math.sqrt(1 + 16 * target)) / 4
+    else
+        local u = (-1 + math.sqrt(1 + 16 * (1 - target))) / 4
+        return 1 - u
+    end
+end
+
+local function nextTimeForRaw(round, r)
+    local speed = round.Speed or 1
+    if speed <= 0 then return 0 end
+    local k = 0.6 * speed
+    local phase = round.Phase or 0
+    local eAsc  = ((r - phase) % 2) / k
+    local eDesc = ((2 - r - phase) % 2) / k
+    return math.min(eAsc, eDesc)
+end
+
+local function computePerfectTime(round, minTime)
+    if not round or not round.Speed or round.Speed <= 0 or not round.Center then return nil end
+    local r = solveRawForCursor(round.Center)
+    local elapsed = nextTimeForRaw(round, r)
+    local target = (round.Epoch or 0) + elapsed
+    local period = 2 / (0.6 * round.Speed)
+    local safety = 0
+    while target < minTime and safety < 1000 do
+        target = target + period
+        safety = safety + 1
+    end
+    return target
+end
+
+local function getDigZone()
+    if DigWorld and type(DigWorld.GetSite) == "function" then
+        local ok, site = pcall(DigWorld.GetSite)
+        if ok and site then
+            local zone = site:FindFirstChild("DigZone")
+            if zone then return zone end
+        end
+    end
+    local islands = Workspace:FindFirstChild("Ts2Islands")
+    if not islands then return nil end
+    local autumn = islands:FindFirstChild("Autumn")
+    if autumn then
+        local site = autumn:FindFirstChild("Digsite")
+        if site then
+            local zone = site:FindFirstChild("DigZone")
+            if zone then return zone end
+        end
+    end
+    for _, island in ipairs(islands:GetChildren()) do
+        local site = island:FindFirstChild("Digsite")
+        if site then
+            local zone = site:FindFirstChild("DigZone")
+            if zone then return zone end
+        end
+    end
+    return nil
+end
+
+local function isInDigZone()
+    if LocalPlayer:GetAttribute("AtDigsite") == true then return true end
+    local zone = getDigZone()
+    if not zone then return false end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    if DigWorld and type(DigWorld.Contains) == "function" then
+        local ok, res = pcall(function() return DigWorld.Contains(zone, char) end)
+        if ok and res then return true end
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local pos = getPartPos(zone)
+    if hrp and pos then return (hrp.Position - pos).Magnitude <= 30 end
+    return false
+end
+
+local function cancelDigSession()
+    if DigState.Session and DigState.Session.Id and DigComm then
+        local sid = DigState.Session.Id
+        task.spawn(function() pcall(function() DigComm:Cancel(sid) end) end)
+    end
+    DigState.Session = nil
+end
+
+local function processOneDigGame()
+    local zone = getDigZone()
+    if not zone then
+        DigState.Status = "Dig site not found"
+        return true
+    end
+    if not isInDigZone() then
+        local pos = getPartPos(zone)
+        if not pos then
+            DigState.Status = "Zone has no position"
+            return true
+        end
+        DigState.Status = "Teleporting to site..."
+        TeleportTo(pos)
+        local deadline = os.clock() + 3
+        while os.clock() < deadline do
+            if not DigState.Running then return false end
+            if isInDigZone() then break end
+            task.wait(0.1)
+        end
+        if not isInDigZone() then
+            DigState.Status = "Not detected at site"
+            return true
+        end
+    end
+    local ok, resp = pcall(function() return DigComm:Begin() end)
+    if not ok or not resp then
+        DigState.Status = "Begin failed"
+        task.wait(0.5)
+        return true
+    end
+    if resp.Error then
+        if resp.Error == "Cooldown" then
+            local mins = math.ceil((resp.Remaining or 0) / 60)
+            DigState.Status = string.format("Cooldown %dm", mins)
+            Notify({Title = "Auto Dig", Content = "Out of digs. Wait " .. mins .. " min.", Icon = "clock", Duration = 4})
+            DigState.Running = false
+            return false
+        end
+        DigState.Status = "Begin error: " .. tostring(resp.Error)
+        task.wait(1)
+        return true
+    end
+    if not resp.Id then
+        DigState.Status = "Session missing Id"
+        task.wait(1)
+        return true
+    end
+    DigState.Session = resp
+    while DigState.Running and DigState.Session do
+        local session = DigState.Session
+        if not session.Round then
+            DigState.Session = nil
+            break
+        end
+        if session.Complete then
+            DigState.Session = nil
+            break
+        end
+        local now = Workspace:GetServerTimeNow()
+        local minTime = math.max(now + 0.02, DigState.LastHitTime + MinHitInterval + 0.02)
+        local target = computePerfectTime(session.Round, minTime)
+        if not target then
+            DigState.Session = nil
+            DigState.Status = "Invalid round"
+            break
+        end
+        while DigState.Running do
+            local t = Workspace:GetServerTimeNow()
+            if t >= target - 0.005 then break end
+            local remaining = target - t
+            if remaining > 0.05 then task.wait(math.min(remaining - 0.02, 0.1))
+            else task.wait() end
+        end
+        if not DigState.Running then return false end
+        local hitTime = Workspace:GetServerTimeNow()
+        local hOk, hResp = pcall(function()
+            return DigComm:Hit(session.Id, session.Round.Sequence, hitTime)
+        end)
+        if not hOk or not hResp then
+            DigState.Status = "Hit failed"
+            task.wait(0.5)
+            DigState.Session = nil
+            break
+        end
+        if hResp.Error then
+            if hResp.Error == "NoSession" or hResp.Error == "StaleRound" then
+                DigState.Session = nil
+                break
+            elseif hResp.Error == "Cooldown" then
+                local mins = math.ceil((hResp.Remaining or 0) / 60)
+                DigState.Status = string.format("Cooldown %dm", mins)
+                DigState.Running = false
+                return false
+            elseif hResp.Error == "TooSoon" then
+                task.wait(0.1)
+            elseif hResp.Error == "Busy" then
+                task.wait(0.2)
+            else
+                DigState.Session = nil
+                DigState.Status = "Error: " .. tostring(hResp.Error)
+                task.wait(0.5)
+                break
+            end
+        else
+            DigState.LastHitTime = hitTime
+            DigState.TotalHits = DigState.TotalHits + 1
+            if hResp.Complete then
+                DigState.TotalGames = DigState.TotalGames + 1
+                DigState.LastReward = hResp.Reward
+                DigState.Status = "Done: " .. tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1)
+                DigState.Session = nil
+                Notify({Title = "Dig Complete", Content = tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1), Icon = "check", Duration = 3})
+                task.wait(1.1)
+                break
+            else
+                DigState.Session = hResp
+                DigState.Status = "Hit " .. DigState.TotalHits
+            end
+        end
+    end
+    return true
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        if not DigState.Running then continue end
+        if not DigComm then
+            DigState.Status = "Service unavailable"
+            DigState.Running = false
+            continue
+        end
+        processOneDigGame()
+    end
+    cancelDigSession()
+end)
+
+-- GAMES: COLOSSEUM
+local ColosseumState = {
+    Active = false, Opponents = {},
+    AttackInterval = 0.15, CriticalInterval = 7,
+    Waves = 0, Status = "Idle",
+}
+
+local ColosseumToggle
+
+if ColosseumNetwork then
+    pcall(function()
+        ColosseumNetwork:BindEvents({
+            ["WaveDefenseOpponentSpawned"] = function(data)
+                if not ColosseumState.Active or not data or not data.Id then return end
+                ColosseumState.Opponents[data.Id] = {
+                    Id = data.Id, ArrivalTime = data.ArrivalTime, SpawnTime = data.SpawnTime,
+                    Health = data.Health or data.MaxHealth, MaxHealth = data.MaxHealth,
+                }
+            end,
+            ["WaveDefenseOpponentDefeated"] = function(data)
+                if not data or not data.OpponentId then return end
+                ColosseumState.Opponents[data.OpponentId] = nil
+            end,
+            ["WaveDefenseHeartLost"] = function(data)
+                if not data or not data.OpponentId then return end
+                ColosseumState.Opponents[data.OpponentId] = nil
+            end,
+            ["WaveDefenseWaveComplete"] = function()
+                ColosseumState.Waves = ColosseumState.Waves + 1
+                ColosseumState.Opponents = {}
+            end,
+            ["WaveDefenseGameOver"] = function()
+                if ColosseumState.Active then
+                    ColosseumState.Active = false
+                    ColosseumState.Status = "Game over"
+                    if ColosseumToggle then
+                        pcall(function() ColosseumToggle:Set(false) end)
+                    end
+                    task.spawn(function()
+                        pcall(function() ColosseumNetwork:InvokeServer("ReturnFromArena") end)
+                    end)
+                end
+            end,
+        })
+    end)
+
+    local function colosseumPickTarget()
+        local targetId, minArrival = nil, math.huge
+        for id, opp in pairs(ColosseumState.Opponents) do
+            if opp.ArrivalTime and opp.ArrivalTime < minArrival then
+                minArrival = opp.ArrivalTime
+                targetId = id
+            end
+        end
+        return targetId
+    end
+
+    local function colosseumApplyResponse(targetId, resp)
+        if not resp or not resp.Health then return false end
+        if resp.Defeated then
+            ColosseumState.Opponents[targetId] = nil
+        elseif ColosseumState.Opponents[targetId] then
+            ColosseumState.Opponents[targetId].Health = resp.Health
+            if resp.NewArrivalTime then
+                ColosseumState.Opponents[targetId].ArrivalTime = resp.NewArrivalTime
+            end
+        end
+        return true
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(ColosseumState.AttackInterval)
+            if not ColosseumState.Active then continue end
+            local targetId = colosseumPickTarget()
+            if not targetId then continue end
+            local ok, resp = pcall(function() return ColosseumNetwork:InvokeServer("AttackOpponent", targetId) end)
+            if ok then colosseumApplyResponse(targetId, resp) end
+        end
+    end)
+
+    task.spawn(function()
+        while true do
+            task.wait(ColosseumState.CriticalInterval)
+            if not ColosseumState.Active then continue end
+            local targetId = colosseumPickTarget()
+            if not targetId then continue end
+            local ok, resp = pcall(function() return ColosseumNetwork:InvokeServer("CriticalAttackOpponent", targetId) end)
+            if ok then colosseumApplyResponse(targetId, resp) end
+        end
+    end)
+end
+
+local function getColosseumArena()
+    local gameFolder = Workspace:FindFirstChild("Game")
+    if gameFolder then
+        local arena = gameFolder:FindFirstChild("WaveDefense")
+        if arena then return arena end
+    end
+    return Workspace:FindFirstChild("WaveDefense")
+end
+
+local function getColosseumArenaPos()
+    local arena = getColosseumArena()
+    if not arena then return nil end
+    local door = arena:FindFirstChild("Door")
+    if door then
+        local endCF = door:GetAttribute("EndCFrame")
+        if typeof(endCF) == "CFrame" then return endCF.Position end
+    end
+    local ok, cf = pcall(function() return arena:GetBoundingBox() end)
+    if ok and cf then return cf.Position end
+    return getPartPos(arena)
+end
+
+local function colosseumStart()
+    if not ColosseumNetwork then return false, "Network unavailable" end
+    if ColosseumState.Active then return true end
+    ColosseumState.Status = "Teleporting to arena..."
+    ColosseumState.Opponents = {}
+    ColosseumState.Waves = 0
+    local arenaPos = getColosseumArenaPos()
+    if arenaPos then
+        TeleportTo(arenaPos)
+        task.wait(0.6)
+    end
+    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
+        pcall(function() ColosseumAdapter:SetActive(true) end)
+        task.wait(0.25)
+    end
+    ColosseumState.Status = "Starting wave defense..."
+    local ok, resp = pcall(function()
+        return ColosseumNetwork:InvokeServer("StartWaveDefense")
+    end)
+    if not ok then
+        ColosseumState.Status = "Invoke error"
+        if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
+            pcall(function() ColosseumAdapter:SetActive(false) end)
+        end
+        return false, "Invoke error"
+    end
+    if not resp then
+        ColosseumState.Status = "No response"
+        if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
+            pcall(function() ColosseumAdapter:SetActive(false) end)
+        end
+        return false, "No response"
+    end
+    if type(resp) == "table" and (resp.OnCooldown or resp.Error) then
+        local errMsg = tostring(resp.Error or "On cooldown")
+        if resp.Remaining then errMsg = errMsg .. " (" .. math.ceil(resp.Remaining / 60) .. "m)" end
+        ColosseumState.Status = errMsg
+        if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
+            pcall(function() ColosseumAdapter:SetActive(false) end)
+        end
+        return false, errMsg
+    end
+    ColosseumState.Active = true
+    ColosseumState.Status = "Playing"
+    if type(resp) == "table" and type(resp.PendingSpawns) == "table" then
+        for _, spawn in ipairs(resp.PendingSpawns) do
+            if type(spawn) == "table" and spawn.Id then
+                ColosseumState.Opponents[spawn.Id] = {
+                    Id = spawn.Id, ArrivalTime = spawn.ArrivalTime, SpawnTime = spawn.SpawnTime,
+                    Health = spawn.MaxHealth, MaxHealth = spawn.MaxHealth,
+                }
+            end
+        end
+    end
+    return true
+end
+
+local function colosseumStop()
+    ColosseumState.Active = false
+    ColosseumState.Status = "Stopping..."
+    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
+        pcall(function() ColosseumAdapter:SetActive(false) end)
+    end
+    if ColosseumNetwork then
+        task.spawn(function()
+            pcall(function() ColosseumNetwork:InvokeServer("EndWaveDefense") end)
+            task.wait(0.5)
+            pcall(function() ColosseumNetwork:InvokeServer("ReturnFromArena") end)
+            ColosseumState.Status = "Stopped"
+        end)
+    end
+end
+
+-- WINDOW
 local Window = WindUI:CreateWindow({
     Title     = "[🎃] Tap Simulator REBORN",
     Author    = "by Ovei",
@@ -1353,10 +1302,9 @@ local FarmTab     = Window:Tab({ Title = "Farm",     Icon = "mouse-pointer" })
 local PetsTab     = Window:Tab({ Title = "Pets",     Icon = "egg" })
 local ChestsTab   = Window:Tab({ Title = "Chests",   Icon = "package" })
 local GamesTab    = Window:Tab({ Title = "Games",    Icon = "swords" })
-local MachinesTab = Window:Tab({ Title = "Machines", Icon = "cog" })
+local CraftTab    = Window:Tab({ Title = "Crafting", Icon = "cog" })
 
 -- FARM TAB
-
 FarmTab:Section({ Title = "Auto Tap", Opened = true })
 FarmTab:Slider({
     Title = "Tap Speed",
@@ -1509,113 +1457,40 @@ task.spawn(function()
 end)
 
 -- PETS TAB
-
 PetsTab:Section({ Title = "Auto Hatch", Opened = true })
 local EggOptions = {}
 if EggConfig then
     for eggName in pairs(EggConfig) do table.insert(EggOptions, eggName) end
     table.sort(EggOptions)
-    HatchCraftState.SelectedEgg = EggOptions[1]
+    HatchState.SelectedEgg = EggOptions[1]
 end
 PetsTab:Dropdown({
     Title  = "Select Egg",
     Desc   = "Choose the egg you want to hatch.",
     Values = EggOptions,
     Value  = EggOptions[1],
-    Callback = function(v) HatchCraftState.SelectedEgg = v end,
+    Callback = function(v) HatchState.SelectedEgg = v end,
 })
 PetsTab:Dropdown({
     Title  = "Hatch Amount",
     Desc   = "How many eggs to hatch at once. x8 requires a Gamepass.",
     Values = { "1", "3", "8" },
     Value  = "1",
-    Callback = function(v) HatchCraftState.SelectedAmount = tonumber(v) or 1 end,
+    Callback = function(v) HatchState.SelectedAmount = tonumber(v) or 1 end,
 })
 PetsTab:Toggle({
     Title = "Auto Hatch",
-    Desc  = "Automatically hatches eggs. Crafting takes priority if enabled.",
+    Desc  = "Automatically hatches eggs.",
     Value = false,
     Flag  = "autoHatch",
-    Callback = function(v) HatchCraftState.HatchRunning = v end,
+    Callback = function(v) HatchState.HatchRunning = v end,
 })
 PetsTab:Slider({
     Title = "Hatch Delay",
     Desc  = "Time to wait between hatch attempts.",
     Step  = 0.1,
     Value = { Min = 0.1, Max = 2, Default = 0.5 },
-    Callback = function(v) HatchCraftState.HatchDelay = v end,
-})
-
-PetsTab:Section({ Title = "Auto Craft", Opened = false })
-local CraftPetsOptions = {}
-if MachineConfig and MachineConfig.Golden and MachineConfig.Golden.Chances then
-    for i, chance in ipairs(MachineConfig.Golden.Chances) do
-        table.insert(CraftPetsOptions, string.format("%d Pets (%d%%)", i, chance))
-    end
-end
-PetsTab:Dropdown({
-    Title  = "Pets to Use",
-    Desc   = "Number of pets consumed per craft.",
-    Values = CraftPetsOptions,
-    Value  = CraftPetsOptions[6],
-    Callback = function(v)
-        local n = tonumber(string.match(v, "%d+"))
-        if n then HatchCraftState.PetsToUse = n end
-    end,
-})
-
-local function getMutationOptions()
-    local set = { ["None"] = true }
-    local data = getData()
-    if data and data.Pets and data.Pets.Owned then
-        for _, pet in pairs(data.Pets.Owned) do
-            if type(pet.Mutation) == "string" and pet.Mutation ~= "" then
-                set[pet.Mutation] = true
-            end
-        end
-    end
-    local list = {}
-    for name in pairs(set) do table.insert(list, name) end
-    table.sort(list)
-    return list
-end
-
-local CraftMutationDropdown
-CraftMutationDropdown = PetsTab:Dropdown({
-    Title  = "Filter Mutation",
-    Desc   = "Only craft pets that have this mutation.",
-    Values = getMutationOptions(),
-    Value  = "None",
-    Callback = function(v) HatchCraftState.SelectedMutation = v end,
-})
-PetsTab:Button({
-    Title = "Refresh Mutations",
-    Desc  = "Updates the mutation list based on your current pets.",
-    Icon  = "refresh-cw",
-    Callback = function()
-        local opts = getMutationOptions()
-        if CraftMutationDropdown then
-            pcall(function() CraftMutationDropdown:Refresh(opts) end)
-            if not table.find(opts, HatchCraftState.SelectedMutation) then
-                HatchCraftState.SelectedMutation = "None"
-                pcall(function() CraftMutationDropdown:Select("None") end)
-            end
-        end
-    end,
-})
-PetsTab:Toggle({
-    Title = "Auto Craft",
-    Desc  = "Automatically crafts Golden pets from matching inventory.",
-    Value = false,
-    Flag  = "autoCraft",
-    Callback = function(v) HatchCraftState.CraftRunning = v end,
-})
-PetsTab:Slider({
-    Title = "Craft Delay",
-    Desc  = "Time to wait between craft attempts.",
-    Step  = 0.1,
-    Value = { Min = 0.5, Max = 5, Default = 1 },
-    Callback = function(v) HatchCraftState.CraftDelay = v end,
+    Callback = function(v) HatchState.HatchDelay = v end,
 })
 
 PetsTab:Section({ Title = "Auto Items", Opened = false })
@@ -1702,15 +1577,14 @@ task.spawn(function()
         task.wait(0.5)
         pcall(function()
             PetsStatus:SetDesc(string.format(
-                "Hatched: %d | Crafted: %d | Items used: %d | %s",
-                HatchCraftState.Hatched, HatchCraftState.Crafted, ItemState.Used, HatchCraftState.Status
+                "Hatched: %d | Items used: %d | %s",
+                HatchState.Hatched, ItemState.Used, HatchState.Status
             ))
         end)
     end
 end)
 
 -- CHESTS TAB
-
 ChestsTab:Section({ Title = "Auto Tap Chest", Opened = true })
 local TapChestCollectToggle, TapChestOpenToggle
 TapChestCollectToggle = ChestsTab:Toggle({
@@ -1780,7 +1654,6 @@ task.spawn(function()
 end)
 
 -- GAMES TAB
-
 GamesTab:Section({ Title = "Auto Dig Perfect", Opened = true })
 GamesTab:Toggle({
     Title = "Auto Dig Perfect",
@@ -1856,7 +1729,7 @@ GamesTab:Slider({
 })
 GamesTab:Paragraph({
     Title = "Note",
-    Desc  = "Auto-start skips the client intro, so opponent models may not appear. Combat and rewards work normally.",
+    Desc  = "Opponent models may not appear since auto-start skips the client intro. Combat and rewards work normally.",
 })
 
 local GamesStatus = GamesTab:Paragraph({ Title = "Status", Desc = "Idle" })
@@ -1865,16 +1738,82 @@ task.spawn(function()
         task.wait(0.5)
         pcall(function()
             GamesStatus:SetDesc(string.format(
-                "Dig: hits %d, games %d | Colosseum: %d waves, %s",
-                DigState.TotalHits, DigState.TotalGames, ColosseumState.Waves, ColosseumState.Status
+                "Dig: %s (%d hits, %d games) | Colosseum: %d waves, %s",
+                DigState.Status, DigState.TotalHits, DigState.TotalGames,
+                ColosseumState.Waves, ColosseumState.Status
             ))
         end)
     end
 end)
 
--- MACHINES TAB
+-- CRAFTING TAB
+CraftTab:Section({ Title = "Auto Craft Golden Pets", Opened = true })
 
-MachinesTab:Section({ Title = "Auto Honey Pot", Opened = true })
+local CraftPetsOptions = {}
+if MachineConfig and MachineConfig.Golden and MachineConfig.Golden.Chances then
+    for i, chance in ipairs(MachineConfig.Golden.Chances) do
+        table.insert(CraftPetsOptions, string.format("%d Pets (%d%%)", i, chance))
+    end
+end
+CraftTab:Dropdown({
+    Title  = "Pets to Use",
+    Desc   = "Number of pets consumed per Golden craft.",
+    Values = CraftPetsOptions,
+    Value  = CraftPetsOptions[6],
+    Callback = function(v)
+        local n = tonumber(string.match(v, "%d+"))
+        if n then CraftState.PetsToUse = n end
+    end,
+})
+
+local function getMutationOptions()
+    local set = { ["None"] = true }
+    local data = getData()
+    if data and data.Pets and data.Pets.Owned then
+        for _, pet in pairs(data.Pets.Owned) do
+            if type(pet.Mutation) == "string" and pet.Mutation ~= "" then
+                set[pet.Mutation] = true
+            end
+        end
+    end
+    local list = {}
+    for name in pairs(set) do table.insert(list, name) end
+    table.sort(list)
+    return list
+end
+
+local CraftMutationDropdown
+CraftMutationDropdown = CraftTab:Dropdown({
+    Title  = "Filter Mutation",
+    Desc   = "Only craft pets that have this mutation.",
+    Values = getMutationOptions(),
+    Value  = "None",
+    Callback = function(v) CraftState.SelectedMutation = v end,
+})
+CraftTab:Button({
+    Title = "Refresh Mutations",
+    Desc  = "Updates the mutation list based on your current pets.",
+    Icon  = "refresh-cw",
+    Callback = function()
+        local opts = getMutationOptions()
+        if CraftMutationDropdown then
+            pcall(function() CraftMutationDropdown:Refresh(opts) end)
+            if not table.find(opts, CraftState.SelectedMutation) then
+                CraftState.SelectedMutation = "None"
+                pcall(function() CraftMutationDropdown:Select("None") end)
+            end
+        end
+    end,
+})
+CraftTab:Toggle({
+    Title = "Auto Craft Golden Pets",
+    Desc  = "Teleports to the Golden Machine and crafts matching pets.",
+    Value = false,
+    Flag  = "autoCraftGolden",
+    Callback = function(v) CraftState.GoldenRunning = v end,
+})
+
+CraftTab:Section({ Title = "Auto Honey Pot", Opened = false })
 
 local HoneyPotRecipeOptions = { "Auto" }
 local HoneyPotRecipeKeyByLabel = {}
@@ -1891,29 +1830,29 @@ if HoneyPotConfig then
     end
 end
 
-MachinesTab:Toggle({
+CraftTab:Toggle({
     Title = "Auto Claim",
     Desc  = "Claims any ready slot on the Honey Pot machine.",
     Value = false,
     Flag  = "autoClaimHoneyPot",
     Callback = function(v) HoneyPotState.ClaimRunning = v end,
 })
-MachinesTab:Toggle({
+CraftTab:Toggle({
     Title = "Auto Craft",
-    Desc  = "Crafts into empty slots when ingredients are available.",
+    Desc  = "Crafts into empty Honey Pot slots when ingredients are available.",
     Value = false,
     Flag  = "autoCraftHoneyPot",
     Callback = function(v) HoneyPotState.CraftRunning = v end,
 })
-MachinesTab:Toggle({
+CraftTab:Toggle({
     Title = "Auto Teleport to Machine",
     Desc  = "Teleports to the Honey Pot machine when out of range.",
     Value = true,
     Flag  = "autoTeleportHoneyPot",
     Callback = function(v) HoneyPotState.AutoTeleport = v end,
 })
-MachinesTab:Dropdown({
-    Title  = "Recipe",
+CraftTab:Dropdown({
+    Title  = "Honey Pot Recipe",
     Desc   = "Auto picks the highest-rarity craftable recipe.",
     Values = HoneyPotRecipeOptions,
     Value  = "Auto",
@@ -1925,29 +1864,29 @@ MachinesTab:Dropdown({
         end
     end,
 })
-MachinesTab:Slider({
+CraftTab:Slider({
     Title = "Craft Amount",
-    Desc  = "Max amount per craft request.",
+    Desc  = "Max amount per Honey Pot craft request.",
     Step  = 1,
     Value = { Min = 1, Max = 50, Default = 1 },
     Callback = function(v) HoneyPotState.CraftAmount = v end,
 })
-MachinesTab:Slider({
+CraftTab:Slider({
     Title = "Action Delay",
-    Desc  = "Time between claim and craft actions.",
+    Desc  = "Time between Honey Pot claim and craft actions.",
     Step  = 0.1,
     Value = { Min = 0.3, Max = 3, Default = 0.5 },
     Callback = function(v) HoneyPotState.Delay = v end,
 })
 
-local MachinesStatus = MachinesTab:Paragraph({ Title = "Status", Desc = "Idle" })
+local CraftStatus = CraftTab:Paragraph({ Title = "Status", Desc = "Idle" })
 task.spawn(function()
     while true do
         task.wait(0.5)
         pcall(function()
-            MachinesStatus:SetDesc(string.format(
-                "Claimed: %d | Crafted: %d | Failed: %d | %s",
-                HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Failed, HoneyPotState.Status
+            CraftStatus:SetDesc(string.format(
+                "Golden: %d | Honey Pot: %d claimed, %d crafted | %s",
+                CraftState.GoldenCrafted, HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Status
             ))
         end)
     end
