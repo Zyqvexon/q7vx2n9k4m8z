@@ -140,7 +140,6 @@ local function TeleportTo(targetPos)
     return false
 end
 
--- FARM STATE
 local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0 }
 
 if TapRemote then
@@ -339,7 +338,6 @@ task.spawn(function()
     end
 end)
 
--- PETS STATE
 local HatchState = {
     HatchRunning = false,
     SelectedEgg = nil, SelectedAmount = 1,
@@ -482,7 +480,6 @@ task.spawn(function()
     end
 end)
 
--- CRAFT STATE (Golden Pets + Honey Pot)
 local CraftState = {
     GoldenRunning = false,
     PetsToUse = 6,
@@ -490,7 +487,6 @@ local CraftState = {
     isRequestPending = false,
     lastCraftResultTime = 0,
     GoldenCrafted = 0,
-    GoldenStatus = "Idle",
 }
 
 if MachineService then
@@ -556,7 +552,6 @@ task.spawn(function()
                     MachineService.MachineCraftRequested:Fire({ Machine = "Golden", PetIds = selected })
                 end)
                 CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
-                CraftState.GoldenStatus = "Crafted | total " .. CraftState.GoldenCrafted
                 task.delay(5, function() if CraftState.isRequestPending then CraftState.isRequestPending = false end end)
                 break
             end
@@ -717,7 +712,6 @@ if HoneyPotService and HoneyPotConfig then
     end)
 end
 
--- CHESTS
 local TapChestState = {
     CollectRunning = false, OpenRunning = false, Mutex = false,
     Delay = 0.5, Collected = 0, Opened = 0, Failed = 0, Status = "Idle",
@@ -863,7 +857,6 @@ task.spawn(function()
     end
 end)
 
--- GAMES: DIG
 local DigState = {
     Running = false, Session = nil, LastHitTime = 0,
     TotalHits = 0, TotalGames = 0, LastReward = nil, Status = "Idle",
@@ -1097,7 +1090,6 @@ task.spawn(function()
     cancelDigSession()
 end)
 
--- GAMES: COLOSSEUM
 local ColosseumState = {
     Active = false, Opponents = {},
     AttackInterval = 0.15, CriticalInterval = 7,
@@ -1285,7 +1277,6 @@ local function colosseumStop()
     end
 end
 
--- WINDOW
 local Window = WindUI:CreateWindow({
     Title     = "[🎃] Tap Simulator REBORN",
     Author    = "by Ovei",
@@ -1304,7 +1295,6 @@ local ChestsTab   = Window:Tab({ Title = "Chests",   Icon = "package" })
 local GamesTab    = Window:Tab({ Title = "Games",    Icon = "swords" })
 local CraftTab    = Window:Tab({ Title = "Crafting", Icon = "cog" })
 
--- FARM TAB
 FarmTab:Section({ Title = "Auto Tap", Opened = true })
 FarmTab:Slider({
     Title = "Tap Speed",
@@ -1456,7 +1446,6 @@ task.spawn(function()
     end
 end)
 
--- PETS TAB
 PetsTab:Section({ Title = "Auto Hatch", Opened = true })
 local EggOptions = {}
 if EggConfig then
@@ -1493,7 +1482,6 @@ PetsTab:Slider({
     Callback = function(v) HatchState.HatchDelay = v end,
 })
 
-PetsTab:Section({ Title = "Auto Items", Opened = false })
 local BoostList = {}
 if BoostConfig and BoostConfig.Definitions then
     for name in pairs(BoostConfig.Definitions) do table.insert(BoostList, name) end
@@ -1503,13 +1491,7 @@ local GiftsList = { "New Years Gift", "Valentines Gift", "St. Patrick Gift", "Re
 local TreatsList = { "RegularTreat", "BagOfTreats", "ExoticShard", "ElectricShard", "SecretFruit", "DragonFruit", "GoldenApple", "RainbowStrawberry", "GoldenTreat" }
 local TotemsList = { "TotemOfLuck", "TotemOfRebirths", "TotemOfClicks", "TotemOfSecretLuck", "TotemOfHatchSpeed" }
 
-PetsTab:Toggle({
-    Title = "Use Boosts",
-    Desc  = "Uses selected boosts from your inventory.",
-    Value = false,
-    Flag  = "useBoosts",
-    Callback = function(v) ItemState.BoostRunning = v end,
-})
+PetsTab:Section({ Title = "Auto Boosts", Opened = false })
 PetsTab:Dropdown({
     Title  = "Select Boosts",
     Desc   = "Choose which boosts to use.",
@@ -1519,12 +1501,14 @@ PetsTab:Dropdown({
     Callback = function(v) ItemState.SelectedBoosts = v end,
 })
 PetsTab:Toggle({
-    Title = "Open Gifts",
-    Desc  = "Opens selected gift items.",
+    Title = "Use Boosts",
+    Desc  = "Uses selected boosts from your inventory.",
     Value = false,
-    Flag  = "openGifts",
-    Callback = function(v) ItemState.GiftRunning = v end,
+    Flag  = "useBoosts",
+    Callback = function(v) ItemState.BoostRunning = v end,
 })
+
+PetsTab:Section({ Title = "Auto Gifts", Opened = false })
 PetsTab:Dropdown({
     Title  = "Select Gifts",
     Desc   = "Choose which gifts to open.",
@@ -1534,12 +1518,14 @@ PetsTab:Dropdown({
     Callback = function(v) ItemState.SelectedGifts = v end,
 })
 PetsTab:Toggle({
-    Title = "Feed Treats",
-    Desc  = "Feeds selected treats to your first pet.",
+    Title = "Open Gifts",
+    Desc  = "Opens selected gift items.",
     Value = false,
-    Flag  = "feedTreats",
-    Callback = function(v) ItemState.TreatRunning = v end,
+    Flag  = "openGifts",
+    Callback = function(v) ItemState.GiftRunning = v end,
 })
+
+PetsTab:Section({ Title = "Auto Treats", Opened = false })
 PetsTab:Dropdown({
     Title  = "Select Treats",
     Desc   = "Choose which treats to feed.",
@@ -1549,12 +1535,14 @@ PetsTab:Dropdown({
     Callback = function(v) ItemState.SelectedTreats = v end,
 })
 PetsTab:Toggle({
-    Title = "Place Totems",
-    Desc  = "Places selected totems near you.",
+    Title = "Feed Treats",
+    Desc  = "Feeds selected treats to your first pet.",
     Value = false,
-    Flag  = "placeTotems",
-    Callback = function(v) ItemState.TotemRunning = v end,
+    Flag  = "feedTreats",
+    Callback = function(v) ItemState.TreatRunning = v end,
 })
+
+PetsTab:Section({ Title = "Auto Totems", Opened = false })
 PetsTab:Dropdown({
     Title  = "Select Totems",
     Desc   = "Choose which totems to place.",
@@ -1563,6 +1551,15 @@ PetsTab:Dropdown({
     AllowNone = true,
     Callback = function(v) ItemState.SelectedTotems = v end,
 })
+PetsTab:Toggle({
+    Title = "Place Totems",
+    Desc  = "Places selected totems near you.",
+    Value = false,
+    Flag  = "placeTotems",
+    Callback = function(v) ItemState.TotemRunning = v end,
+})
+
+PetsTab:Section({ Title = "Item Timing", Opened = false })
 PetsTab:Slider({
     Title = "Item Delay",
     Desc  = "Time to wait between item actions.",
@@ -1584,7 +1581,6 @@ task.spawn(function()
     end
 end)
 
--- CHESTS TAB
 ChestsTab:Section({ Title = "Auto Tap Chest", Opened = true })
 local TapChestCollectToggle, TapChestOpenToggle
 TapChestCollectToggle = ChestsTab:Toggle({
@@ -1653,7 +1649,6 @@ task.spawn(function()
     end
 end)
 
--- GAMES TAB
 GamesTab:Section({ Title = "Auto Dig Perfect", Opened = true })
 GamesTab:Toggle({
     Title = "Auto Dig Perfect",
@@ -1746,7 +1741,6 @@ task.spawn(function()
     end
 end)
 
--- CRAFTING TAB
 CraftTab:Section({ Title = "Auto Craft Golden Pets", Opened = true })
 
 local CraftPetsOptions = {}
@@ -1830,6 +1824,19 @@ if HoneyPotConfig then
     end
 end
 
+CraftTab:Dropdown({
+    Title  = "Honey Pot Recipe",
+    Desc   = "Auto picks the highest-rarity craftable recipe.",
+    Values = HoneyPotRecipeOptions,
+    Value  = "Auto",
+    Callback = function(v)
+        if v == "Auto" then
+            HoneyPotState.SelectedRecipe = "Auto"
+        else
+            HoneyPotState.SelectedRecipe = HoneyPotRecipeKeyByLabel[v] or "Auto"
+        end
+    end,
+})
 CraftTab:Toggle({
     Title = "Auto Claim",
     Desc  = "Claims any ready slot on the Honey Pot machine.",
@@ -1850,19 +1857,6 @@ CraftTab:Toggle({
     Value = true,
     Flag  = "autoTeleportHoneyPot",
     Callback = function(v) HoneyPotState.AutoTeleport = v end,
-})
-CraftTab:Dropdown({
-    Title  = "Honey Pot Recipe",
-    Desc   = "Auto picks the highest-rarity craftable recipe.",
-    Values = HoneyPotRecipeOptions,
-    Value  = "Auto",
-    Callback = function(v)
-        if v == "Auto" then
-            HoneyPotState.SelectedRecipe = "Auto"
-        else
-            HoneyPotState.SelectedRecipe = HoneyPotRecipeKeyByLabel[v] or "Auto"
-        end
-    end,
 })
 CraftTab:Slider({
     Title = "Craft Amount",
