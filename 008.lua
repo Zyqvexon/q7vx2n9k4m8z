@@ -140,6 +140,10 @@ local function TeleportTo(targetPos)
     return false
 end
 
+-- ============================================================
+-- FARM: Auto Tap
+-- ============================================================
+
 local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0, Status = "Idle" }
 
 if TapRemote then
@@ -155,6 +159,10 @@ if TapRemote then
         end
     end)
 end
+
+-- ============================================================
+-- FARM: Auto Rebirth
+-- ============================================================
 
 local RebirthState = { Selected = false, Highest = false, SelectedIndex = 1, Delay = 1, Count = 0, Status = "Idle" }
 local RebirthOptions = {}
@@ -200,11 +208,7 @@ if RebirthRemote and RebirthConfig then
                     local ok, amt = pcall(function() return RebirthConfig.GetAmountFromIndex(i) end)
                     if not ok or not amt then break end
                     local ok2, price = pcall(function() return RebirthConfig.GetPrice(amt, rebirths) end)
-                    if ok2 and price and coins >= price then
-                        bestIdx = i
-                    else
-                        break
-                    end
+                    if ok2 and price and coins >= price then bestIdx = i else break end
                 end
                 if bestIdx > 0 then
                     pcall(function() RebirthRemote:FireServer({ Index = bestIdx }) end)
@@ -225,6 +229,10 @@ if RebirthRemote and RebirthConfig then
         end
     end)
 end
+
+-- ============================================================
+-- FARM: Auto Double Jump
+-- ============================================================
 
 local JumpState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
 
@@ -280,6 +288,10 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- FARM: Auto Skill Tree
+-- ============================================================
+
 local SkillState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
 
 task.spawn(function()
@@ -323,6 +335,10 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- FARM: Auto Quests
+-- ============================================================
+
 local QuestState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
 
 task.spawn(function()
@@ -353,21 +369,18 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- PETS: Auto Hatch & Craft
+-- ============================================================
+
 local HatchCraftState = {
-    HatchRunning = false,
-    CraftRunning = false,
-    SelectedEgg = nil,
-    SelectedAmount = 1,
-    HatchDelay = 0.5,
-    CraftDelay = 1,
-    PetsToUse = 6,
-    SelectedMutation = "None",
+    HatchRunning = false, CraftRunning = false,
+    SelectedEgg = nil, SelectedAmount = 1,
+    HatchDelay = 0.5, CraftDelay = 1,
+    PetsToUse = 6, SelectedMutation = "None",
     isRequestPending = false,
-    lastHatchResultTime = 0,
-    lastCraftResultTime = 0,
-    Hatched = 0,
-    Crafted = 0,
-    Status = "Idle",
+    lastHatchResultTime = 0, lastCraftResultTime = 0,
+    Hatched = 0, Crafted = 0, Status = "Idle",
 }
 
 if EggService then
@@ -505,18 +518,14 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- PETS: Auto Items
+-- ============================================================
+
 local ItemState = {
-    BoostRunning = false,
-    GiftRunning = false,
-    TreatRunning = false,
-    TotemRunning = false,
-    Delay = 1,
-    SelectedBoosts = {},
-    SelectedGifts = {},
-    SelectedTreats = {},
-    SelectedTotems = {},
-    Status = "Idle",
-    Used = 0,
+    BoostRunning = false, GiftRunning = false, TreatRunning = false, TotemRunning = false,
+    Delay = 1, SelectedBoosts = {}, SelectedGifts = {}, SelectedTreats = {}, SelectedTotems = {},
+    Status = "Idle", Used = 0,
 }
 
 task.spawn(function()
@@ -591,15 +600,13 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- CHESTS: Tap Chest + Clicker
+-- ============================================================
+
 local TapChestState = {
-    CollectRunning = false,
-    OpenRunning = false,
-    Mutex = false,
-    Delay = 0.5,
-    Collected = 0,
-    Opened = 0,
-    Failed = 0,
-    Status = "Idle",
+    CollectRunning = false, OpenRunning = false, Mutex = false,
+    Delay = 0.5, Collected = 0, Opened = 0, Failed = 0, Status = "Idle",
 }
 
 local function getAttrFirst(model, names)
@@ -749,14 +756,13 @@ task.spawn(function()
     end
 end)
 
+-- ============================================================
+-- GAMES: Auto Dig Perfect
+-- ============================================================
+
 local DigState = {
-    Running = false,
-    Session = nil,
-    LastHitTime = 0,
-    TotalHits = 0,
-    TotalGames = 0,
-    LastReward = nil,
-    Status = "Idle",
+    Running = false, Session = nil, LastHitTime = 0,
+    TotalHits = 0, TotalGames = 0, LastReward = nil, Status = "Idle",
 }
 
 local MinHitInterval = 0.2
@@ -798,32 +804,49 @@ local function computePerfectTime(round, minTime)
 end
 
 local function getDigZone()
+    if DigWorld and type(DigWorld.GetSite) == "function" then
+        local ok, site = pcall(DigWorld.GetSite)
+        if ok and site then
+            local zone = site:FindFirstChild("DigZone")
+            if zone then return zone end
+        end
+    end
     local islands = Workspace:FindFirstChild("Ts2Islands")
     if not islands then return nil end
     local autumn = islands:FindFirstChild("Autumn")
-    if not autumn then return nil end
-    local site = autumn:FindFirstChild("Digsite")
-    if not site then return nil end
-    return site:FindFirstChild("DigZone")
+    if autumn then
+        local site = autumn:FindFirstChild("Digsite")
+        if site then
+            local zone = site:FindFirstChild("DigZone")
+            if zone then return zone end
+        end
+    end
+    for _, island in ipairs(islands:GetChildren()) do
+        local site = island:FindFirstChild("Digsite")
+        if site then
+            local zone = site:FindFirstChild("DigZone")
+            if zone then return zone end
+        end
+    end
+    return nil
 end
 
 local function isInDigZone()
+    if LocalPlayer:GetAttribute("AtDigsite") == true then return true end
     local zone = getDigZone()
     if not zone then return false end
     local char = LocalPlayer.Character
     if not char then return false end
-    if not DigWorld or type(DigWorld.Contains) ~= "function" then return false end
-    local ok, res = pcall(function() return DigWorld.Contains(zone, char) end)
-    return ok and res
-end
-
-local function getDigAllowance()
-    if not DataController or not DigConfig or type(DigConfig.Allowance) ~= "function" then return 999, 0 end
-    local replica = DataController:GetReplica()
-    if not replica or not replica.Data or not replica.Data.Digging then return 0, 0 end
-    local ok, a, b = pcall(function() return DigConfig.Allowance(replica.Data.Digging, os.time()) end)
-    if ok then return a or 0, b or 0 end
-    return 0, 0
+    if DigWorld and type(DigWorld.Contains) == "function" then
+        local ok, res = pcall(function() return DigWorld.Contains(zone, char) end)
+        if ok and res then return true end
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local pos = getPartPos(zone)
+    if hrp and pos then
+        return (hrp.Position - pos).Magnitude <= 30
+    end
+    return false
 end
 
 local function cancelDigSession()
@@ -834,124 +857,164 @@ local function cancelDigSession()
     DigState.Session = nil
 end
 
+local function processOneDigGame()
+    local zone = getDigZone()
+    if not zone then
+        DigState.Status = "Dig site not found"
+        return true
+    end
+
+    if not isInDigZone() then
+        local pos = getPartPos(zone)
+        if not pos then
+            DigState.Status = "Zone has no position"
+            return true
+        end
+        DigState.Status = "Teleporting to site..."
+        TeleportTo(pos)
+        local deadline = os.clock() + 3
+        while os.clock() < deadline do
+            if not DigState.Running then return false end
+            if isInDigZone() then break end
+            task.wait(0.1)
+        end
+        if not isInDigZone() then
+            DigState.Status = "Not detected at site"
+            return true
+        end
+    end
+
+    local ok, resp = pcall(function() return DigComm:Begin() end)
+    if not ok or not resp then
+        DigState.Status = "Begin failed"
+        task.wait(0.5)
+        return true
+    end
+
+    if resp.Error then
+        if resp.Error == "Cooldown" then
+            local mins = math.ceil((resp.Remaining or 0) / 60)
+            DigState.Status = string.format("Cooldown %dm", mins)
+            Notify({Title = "Auto Dig", Content = "Out of digs. Wait " .. mins .. " min.", Icon = "clock", Duration = 4})
+            DigState.Running = false
+            return false
+        end
+        DigState.Status = "Begin error: " .. tostring(resp.Error)
+        task.wait(1)
+        return true
+    end
+
+    DigState.Session = resp
+
+    while DigState.Running and DigState.Session do
+        local session = DigState.Session
+        if not session.Round then
+            DigState.Session = nil
+            break
+        end
+        if session.Complete then
+            DigState.Session = nil
+            break
+        end
+
+        local now = Workspace:GetServerTimeNow()
+        local minTime = math.max(now + 0.02, DigState.LastHitTime + MinHitInterval + 0.02)
+        local target = computePerfectTime(session.Round, minTime)
+
+        if not target then
+            DigState.Session = nil
+            DigState.Status = "Invalid round"
+            break
+        end
+
+        while DigState.Running do
+            local t = Workspace:GetServerTimeNow()
+            if t >= target - 0.005 then break end
+            local remaining = target - t
+            if remaining > 0.05 then
+                task.wait(math.min(remaining - 0.02, 0.1))
+            else
+                task.wait()
+            end
+        end
+
+        if not DigState.Running then return false end
+
+        local hitTime = Workspace:GetServerTimeNow()
+        local hOk, hResp = pcall(function()
+            return DigComm:Hit(session.Id, session.Round.Sequence, hitTime)
+        end)
+
+        if not hOk or not hResp then
+            DigState.Status = "Hit failed"
+            task.wait(0.5)
+            DigState.Session = nil
+            break
+        end
+
+        if hResp.Error then
+            if hResp.Error == "NoSession" or hResp.Error == "StaleRound" then
+                DigState.Session = nil
+                break
+            elseif hResp.Error == "Cooldown" then
+                local mins = math.ceil((hResp.Remaining or 0) / 60)
+                DigState.Status = string.format("Cooldown %dm", mins)
+                DigState.Running = false
+                return false
+            elseif hResp.Error == "TooSoon" then
+                task.wait(0.1)
+            elseif hResp.Error == "Busy" then
+                task.wait(0.2)
+            else
+                DigState.Session = nil
+                DigState.Status = "Error: " .. tostring(hResp.Error)
+                task.wait(0.5)
+                break
+            end
+        else
+            DigState.LastHitTime = hitTime
+            DigState.TotalHits = DigState.TotalHits + 1
+
+            if hResp.Complete then
+                DigState.TotalGames = DigState.TotalGames + 1
+                DigState.LastReward = hResp.Reward
+                DigState.Status = "Done: " .. tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1)
+                DigState.Session = nil
+                Notify({Title = "Dig Complete", Content = tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1), Icon = "check", Duration = 3})
+                task.wait(1.1)
+                break
+            else
+                DigState.Session = hResp
+                DigState.Status = "Hit " .. DigState.TotalHits
+            end
+        end
+    end
+
+    return true
+end
+
 task.spawn(function()
     while true do
-        task.wait(0.5)
+        task.wait(0.3)
         if not DigState.Running then continue end
         if not DigComm then
             DigState.Status = "Service unavailable"
             DigState.Running = false
             continue
         end
-        local zone = getDigZone()
-        if not zone then
-            DigState.Status = "Dig site not found"
-            continue
-        end
-        if not isInDigZone() then
-            local pos = getPartPos(zone)
-            if pos then TeleportTo(pos) end
-            if not isInDigZone() then
-                DigState.Status = "Teleporting to site..."
-                continue
-            end
-        end
-        local digsLeft = getDigAllowance()
-        if digsLeft <= 0 then
-            DigState.Status = "Out of digs"
-            DigState.Running = false
-            continue
-        end
-        if not DigState.Session then
-            local ok, resp = pcall(function() return DigComm:Begin() end)
-            if not ok or not resp then
-                DigState.Status = "Begin failed"
-                continue
-            end
-            if resp.Error then
-                if resp.Error == "Cooldown" then
-                    DigState.Status = "Cooldown"
-                    DigState.Running = false
-                    continue
-                end
-                DigState.Status = "Error: " .. tostring(resp.Error)
-                continue
-            end
-            DigState.Session = resp
-        end
-        local session = DigState.Session
-        if not session or not session.Round then
-            DigState.Session = nil
-            continue
-        end
-        if session.Complete then
-            DigState.Session = nil
-            continue
-        end
-        local now = Workspace:GetServerTimeNow()
-        local minTime = math.max(now + 0.02, DigState.LastHitTime + MinHitInterval)
-        local target = computePerfectTime(session.Round, minTime)
-        if not target then
-            DigState.Session = nil
-            DigState.Status = "Invalid round"
-            continue
-        end
-        while DigState.Running do
-            local t = Workspace:GetServerTimeNow()
-            if t >= target - 0.005 then break end
-            local remaining = target - t
-            if remaining > 0.05 then task.wait(math.min(remaining - 0.02, 0.2))
-            else task.wait() end
-        end
-        if not DigState.Running then break end
-        local hitTime = Workspace:GetServerTimeNow()
-        local ok, resp = pcall(function() return DigComm:Hit(session.Id, session.Round.Sequence, hitTime) end)
-        if not ok or not resp then
-            DigState.Session = nil
-            DigState.Status = "Hit failed"
-            continue
-        end
-        if resp.Error then
-            if resp.Error == "NoSession" then DigState.Session = nil
-            elseif resp.Error == "Cooldown" then
-                DigState.Status = "Cooldown"
-                DigState.Running = false
-                break
-            elseif resp.Error == "TooSoon" then task.wait(0.2)
-            elseif resp.Error == "Busy" then task.wait(0.3)
-            elseif resp.Error == "StaleRound" then DigState.Session = nil
-            else
-                DigState.Session = nil
-                DigState.Status = "Error: " .. tostring(resp.Error)
-            end
-            continue
-        end
-        DigState.LastHitTime = hitTime
-        DigState.TotalHits = DigState.TotalHits + 1
-        if resp.Complete then
-            DigState.TotalGames = DigState.TotalGames + 1
-            DigState.LastReward = resp.Reward
-            DigState.Status = "Done: " .. tostring(resp.Reward)
-            DigState.Session = nil
-            task.wait(0.4)
-        else
-            DigState.Session = resp
-            DigState.Status = "Hit " .. DigState.TotalHits
-        end
+        processOneDigGame()
     end
     cancelDigSession()
 end)
 
+-- ============================================================
+-- GAMES: Auto Colosseum
+-- ============================================================
+
 local ColosseumState = {
-    Active = false,
-    Opponents = {},
-    AttackInterval = 0.15,
-    CriticalInterval = 7,
-    Attacks = 0,
-    Kills = 0,
-    Criticals = 0,
-    Waves = 0,
-    Status = "Idle",
+    Active = false, Opponents = {},
+    AttackInterval = 0.15, CriticalInterval = 7,
+    Attacks = 0, Kills = 0, Criticals = 0, Waves = 0, Status = "Idle",
 }
 
 if ColosseumNetwork then
@@ -1086,18 +1149,14 @@ local function colosseumStop()
     end
 end
 
+-- ============================================================
+-- MACHINES: Auto Honey Pot
+-- ============================================================
+
 local HoneyPotState = {
-    ClaimRunning = false,
-    CraftRunning = false,
-    AutoTeleport = true,
-    Delay = 0.5,
-    SelectedRecipe = "Auto",
-    CraftAmount = 1,
-    Claimed = 0,
-    Crafted = 0,
-    Failed = 0,
-    Status = "Idle",
-    Mutex = false,
+    ClaimRunning = false, CraftRunning = false, AutoTeleport = true,
+    Delay = 0.5, SelectedRecipe = "Auto", CraftAmount = 1,
+    Claimed = 0, Crafted = 0, Failed = 0, Status = "Idle", Mutex = false,
 }
 
 local function honeyPotSlots()
@@ -1247,6 +1306,10 @@ if HoneyPotService and HoneyPotConfig then
     end)
 end
 
+-- ============================================================
+-- WINDOW
+-- ============================================================
+
 local Window = WindUI:CreateWindow({
     Title     = "[🎃] Tap Simulator REBORN",
     Author    = "by Ovei",
@@ -1259,12 +1322,15 @@ local Window = WindUI:CreateWindow({
     AutoScale = true,
 })
 
-local FarmTab = Window:Tab({ Title = "Farm", Icon = "mouse-pointer" })
-local PetsTab = Window:Tab({ Title = "Pets", Icon = "egg" })
-local ChestsTab = Window:Tab({ Title = "Chests & Dig", Icon = "package" })
-local MiniTab = Window:Tab({ Title = "Minigames", Icon = "swords" })
+local FarmTab     = Window:Tab({ Title = "Farm",     Icon = "mouse-pointer" })
+local PetsTab     = Window:Tab({ Title = "Pets",     Icon = "egg" })
+local ChestsTab   = Window:Tab({ Title = "Chests",   Icon = "package" })
+local GamesTab    = Window:Tab({ Title = "Games",    Icon = "swords" })
+local MachinesTab = Window:Tab({ Title = "Machines", Icon = "cog" })
 
--- =============== FARM TAB ===============
+-- ============================================================
+-- FARM TAB
+-- ============================================================
 
 FarmTab:Section({ Title = "Auto Tap", Opened = true })
 FarmTab:Slider({
@@ -1417,7 +1483,9 @@ task.spawn(function()
     end
 end)
 
--- =============== PETS TAB ===============
+-- ============================================================
+-- PETS TAB
+-- ============================================================
 
 PetsTab:Section({ Title = "Auto Hatch", Opened = true })
 local EggOptions = {}
@@ -1539,309 +1607,4 @@ local TotemsList = { "TotemOfLuck", "TotemOfRebirths", "TotemOfClicks", "TotemOf
 
 PetsTab:Toggle({
     Title = "Use Boosts",
-    Desc  = "Uses selected boosts from your inventory.",
-    Value = false,
-    Flag  = "useBoosts",
-    Callback = function(v) ItemState.BoostRunning = v end,
-})
-PetsTab:Dropdown({
-    Title  = "Select Boosts",
-    Desc   = "Choose which boosts to use.",
-    Values = BoostList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedBoosts = v end,
-})
-PetsTab:Toggle({
-    Title = "Open Gifts",
-    Desc  = "Opens selected gift items.",
-    Value = false,
-    Flag  = "openGifts",
-    Callback = function(v) ItemState.GiftRunning = v end,
-})
-PetsTab:Dropdown({
-    Title  = "Select Gifts",
-    Desc   = "Choose which gifts to open.",
-    Values = GiftsList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedGifts = v end,
-})
-PetsTab:Toggle({
-    Title = "Feed Treats",
-    Desc  = "Feeds selected treats to your first pet.",
-    Value = false,
-    Flag  = "feedTreats",
-    Callback = function(v) ItemState.TreatRunning = v end,
-})
-PetsTab:Dropdown({
-    Title  = "Select Treats",
-    Desc   = "Choose which treats to feed.",
-    Values = TreatsList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedTreats = v end,
-})
-PetsTab:Toggle({
-    Title = "Place Totems",
-    Desc  = "Places selected totems near you.",
-    Value = false,
-    Flag  = "placeTotems",
-    Callback = function(v) ItemState.TotemRunning = v end,
-})
-PetsTab:Dropdown({
-    Title  = "Select Totems",
-    Desc   = "Choose which totems to place.",
-    Values = TotemsList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedTotems = v end,
-})
-PetsTab:Slider({
-    Title = "Item Delay",
-    Desc  = "Time to wait between item actions.",
-    Step  = 0.1,
-    Value = { Min = 0.5, Max = 5, Default = 1 },
-    Callback = function(v) ItemState.Delay = v end,
-})
-
-local PetsStatus = PetsTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            PetsStatus:SetDesc(string.format(
-                "Hatched: %d | Crafted: %d | Items used: %d | %s",
-                HatchCraftState.Hatched, HatchCraftState.Crafted, ItemState.Used, HatchCraftState.Status
-            ))
-        end)
-    end
-end)
-
--- =============== CHESTS & DIG TAB ===============
-
-ChestsTab:Section({ Title = "Auto Tap Chest", Opened = true })
-local TapChestCollectToggle, TapChestOpenToggle
-TapChestCollectToggle = ChestsTab:Toggle({
-    Title = "Auto Collect Tap Chest",
-    Desc  = "Runs the game's own chest opening sequence.",
-    Value = false,
-    Flag  = "autoCollectTapChest",
-    Callback = function(v)
-        TapChestState.CollectRunning = v
-        if v and TapChestState.OpenRunning then
-            TapChestState.OpenRunning = false
-            pcall(function() TapChestOpenToggle:Set(false) end)
-        end
-    end,
-})
-TapChestOpenToggle = ChestsTab:Toggle({
-    Title = "Auto Open Tap Chest",
-    Desc  = "Runs the full chest opening animation before claiming.",
-    Value = false,
-    Flag  = "autoOpenTapChest",
-    Callback = function(v)
-        TapChestState.OpenRunning = v
-        if v and TapChestState.CollectRunning then
-            TapChestState.CollectRunning = false
-            pcall(function() TapChestCollectToggle:Set(false) end)
-        end
-    end,
-})
-ChestsTab:Slider({
-    Title = "Chest Delay",
-    Desc  = "Time to wait between chest actions.",
-    Step  = 0.1,
-    Value = { Min = 0.1, Max = 3, Default = 0.5 },
-    Callback = function(v) TapChestState.Delay = v end,
-})
-
-ChestsTab:Section({ Title = "Auto Clicker Chest", Opened = false })
-ChestsTab:Toggle({
-    Title = "Auto Teleport to Clicker Chest",
-    Desc  = "Finds the nearest ClickerChest and teleports to it.",
-    Value = false,
-    Flag  = "autoClickerChest",
-    Callback = function(v)
-        ClickerState.Running = v
-        if v then ClickerState.Current = getClickerChest() end
-    end,
-})
-ChestsTab:Slider({
-    Title = "Check Delay",
-    Desc  = "Time to wait between scans for a new chest.",
-    Step  = 0.1,
-    Value = { Min = 0.1, Max = 3, Default = 0.5 },
-    Callback = function(v) ClickerState.Delay = v end,
-})
-
-ChestsTab:Section({ Title = "Auto Dig Perfect", Opened = false })
-ChestsTab:Toggle({
-    Title = "Auto Dig Perfect",
-    Desc  = "Teleports to the dig site and hits every round at the perfect zone.",
-    Value = false,
-    Flag  = "autoDigPerfect",
-    Callback = function(v)
-        DigState.Running = v
-        if not v then cancelDigSession() end
-    end,
-})
-ChestsTab:Button({
-    Title = "Cancel Current Session",
-    Desc  = "Fires the cancel remote and clears local state.",
-    Icon  = "x",
-    Callback = function()
-        cancelDigSession()
-        DigState.Status = "Session cancelled"
-    end,
-})
-ChestsTab:Button({
-    Title = "Reset Stats",
-    Desc  = "Clears hit and game counters.",
-    Icon  = "refresh-cw",
-    Callback = function()
-        DigState.TotalHits = 0
-        DigState.TotalGames = 0
-        DigState.LastReward = nil
-        DigState.Status = "Stats reset"
-    end,
-})
-
-local ChestsStatus = ChestsTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            ChestsStatus:SetDesc(string.format(
-                "Collected: %d | Opened: %d | Dig games: %d | Last: %s",
-                TapChestState.Collected, TapChestState.Opened, DigState.TotalGames, tostring(DigState.LastReward or "-")
-            ))
-        end)
-    end
-end)
-
--- =============== MINIGAMES TAB ===============
-
-MiniTab:Section({ Title = "Auto Colosseum", Opened = true })
-local ColosseumToggle
-ColosseumToggle = MiniTab:Toggle({
-    Title = "Auto Colosseum",
-    Desc  = "Starts Pet Defense and auto-attacks the closest threat.",
-    Value = false,
-    Flag  = "autoColosseum",
-    Callback = function(v)
-        if v then
-            local ok = colosseumStart()
-            if not ok and ColosseumToggle then
-                pcall(function() ColosseumToggle:Set(false) end)
-                Notify({ Title = "Colosseum", Content = "Could not start", Icon = "x", Duration = 3 })
-            end
-        else
-            colosseumStop()
-        end
-    end,
-})
-MiniTab:Slider({
-    Title = "Attack Interval",
-    Desc  = "Time between attacks on the same opponent.",
-    Step  = 0.01,
-    Value = { Min = 0.05, Max = 1, Default = 0.15 },
-    Callback = function(v) ColosseumState.AttackInterval = v end,
-})
-MiniTab:Slider({
-    Title = "Critical Interval",
-    Desc  = "Time between critical hit attempts.",
-    Step  = 0.5,
-    Value = { Min = 3, Max = 15, Default = 7 },
-    Callback = function(v) ColosseumState.CriticalInterval = v end,
-})
-MiniTab:Paragraph({
-    Title = "Note",
-    Desc  = "Auto-start skips the client intro, so opponent models may not appear. Combat and rewards work normally.",
-})
-
-MiniTab:Section({ Title = "Auto Honey Pot", Opened = false })
-
-local HoneyPotRecipeOptions = { "Auto" }
-local HoneyPotRecipeKeyByLabel = {}
-if HoneyPotConfig then
-    local seen = {}
-    for i, recipe in ipairs(HoneyPotConfig.Recipes) do
-        local output = HoneyPotConfig.Describe(recipe.Output)
-        local base = (output and output.Name) or recipe.Key
-        local label = base
-        if seen[base] then label = base .. " #" .. i end
-        seen[base] = true
-        HoneyPotRecipeKeyByLabel[label] = recipe.Key
-        table.insert(HoneyPotRecipeOptions, label)
-    end
-end
-
-MiniTab:Toggle({
-    Title = "Auto Claim",
-    Desc  = "Claims any ready slot on the Honey Pot machine.",
-    Value = false,
-    Flag  = "autoClaimHoneyPot",
-    Callback = function(v) HoneyPotState.ClaimRunning = v end,
-})
-MiniTab:Toggle({
-    Title = "Auto Craft",
-    Desc  = "Crafts into empty slots when ingredients are available.",
-    Value = false,
-    Flag  = "autoCraftHoneyPot",
-    Callback = function(v) HoneyPotState.CraftRunning = v end,
-})
-MiniTab:Toggle({
-    Title = "Auto Teleport to Machine",
-    Desc  = "Teleports to the Honey Pot machine when out of range.",
-    Value = true,
-    Flag  = "autoTeleportHoneyPot",
-    Callback = function(v) HoneyPotState.AutoTeleport = v end,
-})
-MiniTab:Dropdown({
-    Title  = "Recipe",
-    Desc   = "Auto picks the highest-rarity craftable recipe.",
-    Values = HoneyPotRecipeOptions,
-    Value  = "Auto",
-    Callback = function(v)
-        if v == "Auto" then
-            HoneyPotState.SelectedRecipe = "Auto"
-        else
-            HoneyPotState.SelectedRecipe = HoneyPotRecipeKeyByLabel[v] or "Auto"
-        end
-    end,
-})
-MiniTab:Slider({
-    Title = "Craft Amount",
-    Desc  = "Max amount per craft request.",
-    Step  = 1,
-    Value = { Min = 1, Max = 50, Default = 1 },
-    Callback = function(v) HoneyPotState.CraftAmount = v end,
-})
-MiniTab:Slider({
-    Title = "Action Delay",
-    Desc  = "Time between claim and craft actions.",
-    Step  = 0.1,
-    Value = { Min = 0.3, Max = 3, Default = 0.5 },
-    Callback = function(v) HoneyPotState.Delay = v end,
-})
-
-local MiniStatus = MiniTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            MiniStatus:SetDesc(string.format(
-                "Colosseum: %d waves | Honey Pot claim %d, craft %d | %s",
-                ColosseumState.Waves, HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Status
-            ))
-        end)
-    end
-end)
-
-Notify({
-    Title = "Tap Simulator REBORN",
-    Content = "Loaded. Toggle anything to start.",
-    Icon = "check",
-    Duration = 5,
-})
+    Desc  = "Uses selected boosts from your inventory
