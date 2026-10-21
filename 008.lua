@@ -141,7 +141,7 @@ local function TeleportTo(targetPos)
 end
 
 -- ============================================================
--- FARM: Auto Tap
+-- FARM
 -- ============================================================
 
 local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0, Status = "Idle" }
@@ -159,10 +159,6 @@ if TapRemote then
         end
     end)
 end
-
--- ============================================================
--- FARM: Auto Rebirth
--- ============================================================
 
 local RebirthState = { Selected = false, Highest = false, SelectedIndex = 1, Delay = 1, Count = 0, Status = "Idle" }
 local RebirthOptions = {}
@@ -230,10 +226,6 @@ if RebirthRemote and RebirthConfig then
     end)
 end
 
--- ============================================================
--- FARM: Auto Double Jump
--- ============================================================
-
 local JumpState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
 
 local function attemptBuyJump()
@@ -288,10 +280,6 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- FARM: Auto Skill Tree
--- ============================================================
-
 local SkillState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
 
 task.spawn(function()
@@ -335,10 +323,6 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- FARM: Auto Quests
--- ============================================================
-
 local QuestState = { Running = false, Delay = 1, Count = 0, Status = "Idle" }
 
 task.spawn(function()
@@ -370,7 +354,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- PETS: Auto Hatch & Craft
+-- PETS
 -- ============================================================
 
 local HatchCraftState = {
@@ -518,10 +502,6 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
--- PETS: Auto Items
--- ============================================================
-
 local ItemState = {
     BoostRunning = false, GiftRunning = false, TreatRunning = false, TotemRunning = false,
     Delay = 1, SelectedBoosts = {}, SelectedGifts = {}, SelectedTreats = {}, SelectedTotems = {},
@@ -601,7 +581,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- CHESTS: Tap Chest + Clicker
+-- CHESTS
 -- ============================================================
 
 local TapChestState = {
@@ -757,7 +737,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- GAMES: Auto Dig Perfect
+-- GAMES: Auto Dig
 -- ============================================================
 
 local DigState = {
@@ -843,9 +823,7 @@ local function isInDigZone()
     end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local pos = getPartPos(zone)
-    if hrp and pos then
-        return (hrp.Position - pos).Magnitude <= 30
-    end
+    if hrp and pos then return (hrp.Position - pos).Magnitude <= 30 end
     return false
 end
 
@@ -863,7 +841,6 @@ local function processOneDigGame()
         DigState.Status = "Dig site not found"
         return true
     end
-
     if not isInDigZone() then
         local pos = getPartPos(zone)
         if not pos then
@@ -883,14 +860,12 @@ local function processOneDigGame()
             return true
         end
     end
-
     local ok, resp = pcall(function() return DigComm:Begin() end)
     if not ok or not resp then
         DigState.Status = "Begin failed"
         task.wait(0.5)
         return true
     end
-
     if resp.Error then
         if resp.Error == "Cooldown" then
             local mins = math.ceil((resp.Remaining or 0) / 60)
@@ -903,9 +878,7 @@ local function processOneDigGame()
         task.wait(1)
         return true
     end
-
     DigState.Session = resp
-
     while DigState.Running and DigState.Session do
         local session = DigState.Session
         if not session.Round then
@@ -916,42 +889,32 @@ local function processOneDigGame()
             DigState.Session = nil
             break
         end
-
         local now = Workspace:GetServerTimeNow()
         local minTime = math.max(now + 0.02, DigState.LastHitTime + MinHitInterval + 0.02)
         local target = computePerfectTime(session.Round, minTime)
-
         if not target then
             DigState.Session = nil
             DigState.Status = "Invalid round"
             break
         end
-
         while DigState.Running do
             local t = Workspace:GetServerTimeNow()
             if t >= target - 0.005 then break end
             local remaining = target - t
-            if remaining > 0.05 then
-                task.wait(math.min(remaining - 0.02, 0.1))
-            else
-                task.wait()
-            end
+            if remaining > 0.05 then task.wait(math.min(remaining - 0.02, 0.1))
+            else task.wait() end
         end
-
         if not DigState.Running then return false end
-
         local hitTime = Workspace:GetServerTimeNow()
         local hOk, hResp = pcall(function()
             return DigComm:Hit(session.Id, session.Round.Sequence, hitTime)
         end)
-
         if not hOk or not hResp then
             DigState.Status = "Hit failed"
             task.wait(0.5)
             DigState.Session = nil
             break
         end
-
         if hResp.Error then
             if hResp.Error == "NoSession" or hResp.Error == "StaleRound" then
                 DigState.Session = nil
@@ -974,7 +937,6 @@ local function processOneDigGame()
         else
             DigState.LastHitTime = hitTime
             DigState.TotalHits = DigState.TotalHits + 1
-
             if hResp.Complete then
                 DigState.TotalGames = DigState.TotalGames + 1
                 DigState.LastReward = hResp.Reward
@@ -989,7 +951,6 @@ local function processOneDigGame()
             end
         end
     end
-
     return true
 end
 
@@ -1008,7 +969,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- GAMES: Auto Colosseum
+-- GAMES: Auto Colosseum (FIXED)
 -- ============================================================
 
 local ColosseumState = {
@@ -1016,6 +977,8 @@ local ColosseumState = {
     AttackInterval = 0.15, CriticalInterval = 7,
     Attacks = 0, Kills = 0, Criticals = 0, Waves = 0, Status = "Idle",
 }
+
+local ColosseumToggle
 
 if ColosseumNetwork then
     pcall(function()
@@ -1044,6 +1007,9 @@ if ColosseumNetwork then
                 if ColosseumState.Active then
                     ColosseumState.Active = false
                     ColosseumState.Status = "Game over"
+                    if ColosseumToggle then
+                        pcall(function() ColosseumToggle:Set(false) end)
+                    end
                     task.spawn(function()
                         pcall(function() ColosseumNetwork:InvokeServer("ReturnFromArena") end)
                     end)
@@ -1103,27 +1069,84 @@ if ColosseumNetwork then
     end)
 end
 
+local function getArenaPosition()
+    local gameFolder = Workspace:FindFirstChild("Game")
+    if not gameFolder then return nil end
+    local arena = gameFolder:FindFirstChild("WaveDefense")
+    if not arena then return nil end
+    local ok, cf = pcall(function() return arena:GetBoundingBox() end)
+    if ok and cf then return cf.Position end
+    return getPartPos(arena)
+end
+
+local function isArenaTagged()
+    local gameFolder = Workspace:FindFirstChild("Game")
+    if not gameFolder then return false end
+    local arena = gameFolder:FindFirstChild("WaveDefense")
+    if not arena then return false end
+    return arena:GetAttribute("TaggedArena") == true
+end
+
 local function colosseumStart()
-    if not ColosseumNetwork then return false end
+    if not ColosseumNetwork then return false, "Network unavailable" end
     if ColosseumState.Active then return true end
+
     ColosseumState.Status = "Starting..."
     ColosseumState.Opponents = {}
     ColosseumState.Attacks = 0
     ColosseumState.Kills = 0
     ColosseumState.Criticals = 0
     ColosseumState.Waves = 0
-    local ok, resp = pcall(function() return ColosseumNetwork:InvokeServer("StartWaveDefense") end)
-    if not ok or not resp then
-        ColosseumState.Status = "Start failed"
-        return false
+
+    if not isArenaTagged() then
+        local arenaPos = getArenaPosition()
+        if arenaPos then
+            ColosseumState.Status = "Teleporting to arena..."
+            TeleportTo(arenaPos)
+        end
+        local deadline = os.clock() + 5
+        while not isArenaTagged() and os.clock() < deadline do
+            task.wait(0.1)
+        end
+        if not isArenaTagged() then
+            ColosseumState.Status = "Not at arena"
+            return false, "Not at arena"
+        end
     end
-    if resp.OnCooldown or resp.Error then
-        ColosseumState.Status = tostring(resp.Error or "Cooldown")
-        return false
+
+    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
+        pcall(function() ColosseumAdapter:SetActive(true) end)
+        task.wait(0.25)
     end
+
+    local ok, resp = pcall(function()
+        return ColosseumNetwork:InvokeServer("StartWaveDefense")
+    end)
+
+    if not ok then
+        ColosseumState.Status = "Invoke error"
+        return false, "Invoke error"
+    end
+    if not resp then
+        ColosseumState.Status = "No response"
+        return false, "No response"
+    end
+
+    if type(resp) == "table" then
+        if resp.OnCooldown or resp.Error then
+            local errMsg = tostring(resp.Error or "On cooldown")
+            if resp.Remaining then
+                errMsg = errMsg .. " (" .. math.ceil(resp.Remaining / 60) .. "m)"
+            end
+            ColosseumState.Status = errMsg
+            return false, errMsg
+        end
+    end
+
     ColosseumState.Active = true
     ColosseumState.Status = "Playing"
-    if type(resp.PendingSpawns) == "table" then
+
+    if type(resp) == "table" and type(resp.PendingSpawns) == "table" then
         for _, spawn in ipairs(resp.PendingSpawns) do
             if type(spawn) == "table" and spawn.Id then
                 ColosseumState.Opponents[spawn.Id] = {
@@ -1133,12 +1156,16 @@ local function colosseumStart()
             end
         end
     end
+
     return true
 end
 
 local function colosseumStop()
     ColosseumState.Active = false
     ColosseumState.Status = "Stopping..."
+    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
+        pcall(function() ColosseumAdapter:SetActive(false) end)
+    end
     if ColosseumNetwork then
         task.spawn(function()
             pcall(function() ColosseumNetwork:InvokeServer("EndWaveDefense") end)
@@ -1150,7 +1177,7 @@ local function colosseumStop()
 end
 
 -- ============================================================
--- MACHINES: Auto Honey Pot
+-- MACHINES
 -- ============================================================
 
 local HoneyPotState = {
@@ -1328,9 +1355,7 @@ local ChestsTab   = Window:Tab({ Title = "Chests",   Icon = "package" })
 local GamesTab    = Window:Tab({ Title = "Games",    Icon = "swords" })
 local MachinesTab = Window:Tab({ Title = "Machines", Icon = "cog" })
 
--- ============================================================
 -- FARM TAB
--- ============================================================
 
 FarmTab:Section({ Title = "Auto Tap", Opened = true })
 FarmTab:Slider({
@@ -1483,9 +1508,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- PETS TAB
--- ============================================================
 
 PetsTab:Section({ Title = "Auto Hatch", Opened = true })
 local EggOptions = {}
@@ -1686,9 +1709,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- CHESTS TAB
--- ============================================================
 
 ChestsTab:Section({ Title = "Auto Tap Chest", Opened = true })
 local TapChestCollectToggle, TapChestOpenToggle
@@ -1758,9 +1779,7 @@ task.spawn(function()
     end
 end)
 
--- ============================================================
 -- GAMES TAB
--- ============================================================
 
 GamesTab:Section({ Title = "Auto Dig Perfect", Opened = true })
 GamesTab:Toggle({
@@ -1799,18 +1818,22 @@ GamesTab:Button({
 })
 
 GamesTab:Section({ Title = "Auto Colosseum", Opened = false })
-local ColosseumToggle
 ColosseumToggle = GamesTab:Toggle({
     Title = "Auto Colosseum",
-    Desc  = "Starts Pet Defense and auto-attacks the closest threat.",
+    Desc  = "Teleports to the arena, activates Pet Defense, and auto-attacks.",
     Value = false,
     Flag  = "autoColosseum",
     Callback = function(v)
         if v then
-            local ok = colosseumStart()
-            if not ok and ColosseumToggle then
+            local ok, err = colosseumStart()
+            if not ok then
                 pcall(function() ColosseumToggle:Set(false) end)
-                Notify({ Title = "Colosseum", Content = "Could not start", Icon = "x", Duration = 3 })
+                Notify({
+                    Title = "Colosseum",
+                    Content = "Cannot start: " .. tostring(err or "unknown"),
+                    Icon = "x",
+                    Duration = 5,
+                })
             end
         else
             colosseumStop()
@@ -1842,16 +1865,14 @@ task.spawn(function()
         task.wait(0.5)
         pcall(function()
             GamesStatus:SetDesc(string.format(
-                "Dig: hits %d, games %d, last %s | Colosseum: %d waves",
-                DigState.TotalHits, DigState.TotalGames, tostring(DigState.LastReward or "-"), ColosseumState.Waves
+                "Dig: hits %d, games %d | Colosseum: %d waves, %s",
+                DigState.TotalHits, DigState.TotalGames, ColosseumState.Waves, ColosseumState.Status
             ))
         end)
     end
 end)
 
--- ============================================================
 -- MACHINES TAB
--- ============================================================
 
 MachinesTab:Section({ Title = "Auto Honey Pot", Opened = true })
 
