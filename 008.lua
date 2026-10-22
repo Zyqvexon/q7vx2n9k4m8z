@@ -1,17 +1,53 @@
 task.wait(2)
 
-if not getgenv().gethui then
-    getgenv().gethui = function()
-        return game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-    end
+local function safeEnv()
+    local ok, env = pcall(function() return getgenv() end)
+    if ok and type(env) == "table" then return env end
+    local ok2, env2 = pcall(function() return getfenv(0) end)
+    if ok2 and type(env2) == "table" then return env2 end
+    return _G
 end
 
-local okWind, WindUI = pcall(function()
-    return loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua"))()
-end)
+local ENV = safeEnv()
 
+if not ENV.gethui then
+    pcall(function()
+        ENV.gethui = function()
+            local ok, pg = pcall(function()
+                return game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 10)
+            end)
+            if ok and pg then return pg end
+            return game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        end
+    end)
+end
+
+local function httpGet(url)
+    local ok, result = pcall(function() return game:HttpGet(url) end)
+    if ok and type(result) == "string" and #result > 200 then return result end
+    local requesters = {}
+    pcall(function() if syn and syn.request then table.insert(requesters, syn.request) end end)
+    pcall(function() if http and http.request then table.insert(requesters, http.request) end end)
+    pcall(function() if http_request then table.insert(requesters, http_request) end end)
+    pcall(function() if request then table.insert(requesters, request) end end)
+    for _, fn in ipairs(requesters) do
+        local ok2, res = pcall(function() return fn({ Url = url, Method = "GET" }) end)
+        if ok2 and type(res) == "table" and res.Body and #res.Body > 200 then
+            return res.Body
+        end
+    end
+    return nil
+end
+
+local windSrc = httpGet("https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua")
+if not windSrc then
+    warn("[TSR] WindUI download failed. Enable HTTP/loadstring in Arceus settings.")
+    return
+end
+
+local okWind, WindUI = pcall(function() return loadstring(windSrc)() end)
 if not okWind or not WindUI then
-    warn("[Tap Simulator REBORN] WindUI load failed")
+    warn("[TSR] WindUI load failed: " .. tostring(WindUI))
     return
 end
 
@@ -22,51 +58,55 @@ local CollectionService = game:GetService("CollectionService")
 local LocalPlayer = Players.LocalPlayer
 local RS = ReplicatedStorage
 
-local function safeRequire(path)
-    if not path then return nil end
+local MissingModules = {}
+
+local function safeRequire(path, name)
+    if not path then
+        if name then table.insert(MissingModules, name) end
+        return nil
+    end
     local ok, mod = pcall(require, path)
-    return ok and mod or nil
+    if ok and mod then return mod end
+    if name then table.insert(MissingModules, name) end
+    return nil
 end
 
-local DataController = safeRequire(RS.Controllers.Core.DataController)
-local CommModule     = safeRequire(RS.Packages.Comm)
-
-if not DataController or not CommModule then
-    warn("[Tap Simulator REBORN] Core modules missing")
-    return
-end
+local DataController = safeRequire(RS.Controllers.Core.DataController, "DataController")
+local CommModule     = safeRequire(RS.Packages.Comm, "Comm")
 
 local RemoteServices = RS:FindFirstChild("RemoteServices")
 
-local TapChestConfig       = safeRequire(RS.Shared.Game.TapChestConfig)
-local TapChestController   = safeRequire(RS.Controllers.Game.TapChestController)
-local DigConfig            = safeRequire(RS.Shared.Minigames.DigConfig)
-local DigWorld             = safeRequire(RS.Shared.Minigames.DigWorld)
-local HoneyPotConfig       = safeRequire(RS.Shared.Items.HoneyPotConfig)
-local ColosseumAdapter     = safeRequire(RS.Controllers.Minigames.ColosseumClientAdapter)
+local TapChestConfig       = safeRequire(RS.Shared.Game.TapChestConfig, "TapChestConfig")
+local TapChestController   = safeRequire(RS.Controllers.Game.TapChestController, "TapChestController")
+local DigConfig            = safeRequire(RS.Shared.Minigames.DigConfig, "DigConfig")
+local DigWorld             = safeRequire(RS.Shared.Minigames.DigWorld, "DigWorld")
+local HoneyPotConfig       = safeRequire(RS.Shared.Items.HoneyPotConfig, "HoneyPotConfig")
+local ColosseumAdapter     = safeRequire(RS.Controllers.Minigames.ColosseumClientAdapter, "ColosseumAdapter")
 
-local EggConfig            = safeRequire(RS.Shared.Pets.LaunchEggConfig)
-local EggPricing           = safeRequire(RS.Shared.Pets.EggPricing)
-local GamepassPerks        = safeRequire(RS.Shared.Monetization.GamepassPerks)
-local BoostFormula         = safeRequire(RS.Shared.Items.BoostFormula)
-local BoostConfig          = safeRequire(RS.Shared.Items.BoostConfig)
-local MachineConfig        = safeRequire(RS.Shared.Pets.MachineConfig)
-local SkillTreeConfig      = safeRequire(RS.Shared.Progression.SkillTreeConfig)
-local SkillTreeFormula     = safeRequire(RS.Shared.Progression.SkillTreeFormula)
-local SkillTreeRequirements= safeRequire(RS.Shared.Progression.SkillTreeRequirements)
-local QuestConfig          = safeRequire(RS.Shared.Quests.QuestConfig)
-local RebirthConfig        = safeRequire(RS.Shared.Progression.RebirthConfig)
-local RebirthButtonConfig  = safeRequire(RS.Shared.Progression.RebirthButtonConfig)
-local PhysicalUpgradeConfig= safeRequire(RS.Shared.Progression.PhysicalUpgradeConfig)
-local CurrencyConfig       = safeRequire(RS.Shared.Core.CurrencyConfig)
-local GiftController       = safeRequire(RS.Controllers.Items.GiftController)
+local EggConfig            = safeRequire(RS.Shared.Pets.LaunchEggConfig, "EggConfig")
+local EggPricing           = safeRequire(RS.Shared.Pets.EggPricing, "EggPricing")
+local GamepassPerks        = safeRequire(RS.Shared.Monetization.GamepassPerks, "GamepassPerks")
+local BoostFormula         = safeRequire(RS.Shared.Items.BoostFormula, "BoostFormula")
+local BoostConfig          = safeRequire(RS.Shared.Items.BoostConfig, "BoostConfig")
+local MachineConfig        = safeRequire(RS.Shared.Pets.MachineConfig, "MachineConfig")
+local SkillTreeConfig      = safeRequire(RS.Shared.Progression.SkillTreeConfig, "SkillTreeConfig")
+local SkillTreeFormula     = safeRequire(RS.Shared.Progression.SkillTreeFormula, "SkillTreeFormula")
+local SkillTreeRequirements= safeRequire(RS.Shared.Progression.SkillTreeRequirements, "SkillTreeRequirements")
+local QuestConfig          = safeRequire(RS.Shared.Quests.QuestConfig, "QuestConfig")
+local RebirthConfig        = safeRequire(RS.Shared.Progression.RebirthConfig, "RebirthConfig")
+local RebirthButtonConfig  = safeRequire(RS.Shared.Progression.RebirthButtonConfig, "RebirthButtonConfig")
+local PhysicalUpgradeConfig= safeRequire(RS.Shared.Progression.PhysicalUpgradeConfig, "PhysicalUpgradeConfig")
+local CurrencyConfig       = safeRequire(RS.Shared.Core.CurrencyConfig, "CurrencyConfig")
+local GiftController       = safeRequire(RS.Controllers.Items.GiftController, "GiftController")
 
 local function makeService(name)
-    if not RemoteServices then return nil end
+    if not RemoteServices or not CommModule then return nil end
+    if type(CommModule) ~= "table" or not CommModule.ClientComm then return nil end
     local ok, svc = pcall(function()
         return CommModule.ClientComm.new(RemoteServices, false, name):BuildObject()
     end)
-    return ok and svc or nil
+    if ok and svc then return svc end
+    return nil
 end
 
 local EggService       = makeService("EggService")
@@ -79,8 +119,8 @@ local HoneyPotService  = makeService("HoneyPotService")
 
 local function getRemote(serviceName, kind, name)
     if not RemoteServices then return nil end
-    local svc = RemoteServices:FindFirstChild(serviceName)
-    if not svc then return nil end
+    local ok, svc = pcall(function() return RemoteServices:FindFirstChild(serviceName) end)
+    if not ok or not svc then return nil end
     local k = svc:FindFirstChild(kind)
     if k then return k:FindFirstChild(name) end
     return svc:FindFirstChild(name)
@@ -99,9 +139,16 @@ local function Notify(cfg)
     pcall(function() WindUI:Notify(cfg) end)
 end
 
+local function serverTime()
+    local ok, v = pcall(function() return Workspace:GetServerTimeNow() end)
+    if ok and type(v) == "number" then return v end
+    return os.clock()
+end
+
 local function getData()
-    local replica = DataController:GetReplica()
-    if not replica then return nil end
+    if not DataController then return nil end
+    local ok, replica = pcall(function() return DataController:GetReplica() end)
+    if not ok or not replica then return nil end
     return replica.Data
 end
 
@@ -125,7 +172,7 @@ local function TeleportTo(targetPos)
         local dist = (hrp.Position - targetPos).Magnitude
         if dist <= 10 then return true end
         local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
+        if humanoid then pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Physics) end) end
         hrp.Anchored = true
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
@@ -134,7 +181,7 @@ local function TeleportTo(targetPos)
             task.wait(0.05)
         end
         hrp.Anchored = false
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        if humanoid then pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
         task.wait(0.4)
         hrp = char:FindFirstChild("HumanoidRootPart")
         if hrp and (hrp.Position - targetPos).Magnitude <= 15 then return true end
@@ -145,9 +192,7 @@ end
 local function restoreCFrame(savedCF)
     if not savedCF then return end
     local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = savedCF
-    end
+    if hrp then hrp.CFrame = savedCF end
 end
 
 local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0 }
@@ -155,7 +200,7 @@ local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0 }
 if TapRemote then
     task.spawn(function()
         while true do
-            task.wait(math.max(TapState.Delay, 0.001))
+            task.wait(math.max(TapState.Delay, 0.01))
             if not TapState.Running then continue end
             TapState.Seq = TapState.Seq + 1
             local ok = pcall(function()
@@ -167,8 +212,8 @@ if TapRemote then
 end
 
 local RebirthState = { Selected = false, Highest = false, SelectedIndex = 1, Delay = 1, Count = 0 }
-local RebirthOptions = {}
-local RebirthIndexByName = {}
+local RebirthOptions = { "1" }
+local RebirthIndexByName = { ["1"] = 1 }
 
 local function rebuildRebirthOptions()
     RebirthOptions = {}
@@ -541,9 +586,7 @@ task.spawn(function()
             if tryCraftGolden(data) then continue end
         end
         if HatchState.HatchRunning and now - HatchState.lastHatchResultTime >= HatchState.HatchDelay then
-            if CraftState.GoldenRunning and hasCraftablePets(data) then
-                continue
-            end
+            if CraftState.GoldenRunning and hasCraftablePets(data) then continue end
             tryHatchEgg(data)
         end
     end
@@ -561,9 +604,7 @@ task.spawn(function()
         local data = getData()
         if not data then continue end
         local items = (data.Items and data.Items.Owned) or {}
-        local function hasItem(name)
-            return (items[name] or 0) > 0
-        end
+        local function hasItem(name) return (items[name] or 0) > 0 end
         if ItemState.BoostRunning and BoostRemote then
             local boosts = data.Boosts or {}
             for _, name in ipairs(ItemState.SelectedBoosts) do
@@ -633,8 +674,7 @@ end
 
 local function honeyPotSlotState(slot)
     if slot == nil then return "Empty" end
-    local now = Workspace:GetServerTimeNow()
-    if HoneyPotConfig.Progress(slot, now) >= slot.Amount then return "Ready" end
+    if HoneyPotConfig.Progress(slot, serverTime()) >= slot.Amount then return "Ready" end
     return "Blending"
 end
 
@@ -1071,7 +1111,7 @@ local function processOneDigGame()
             DigState.Session = nil
             break
         end
-        local now = Workspace:GetServerTimeNow()
+        local now = serverTime()
         local minTime = math.max(now + 0.02, DigState.LastHitTime + MinHitInterval + 0.02)
         local target = computePerfectTime(session.Round, minTime)
         if not target then
@@ -1080,14 +1120,14 @@ local function processOneDigGame()
             break
         end
         while DigState.Running do
-            local t = Workspace:GetServerTimeNow()
+            local t = serverTime()
             if t >= target - 0.005 then break end
             local remaining = target - t
             if remaining > 0.05 then task.wait(math.min(remaining - 0.02, 0.1))
             else task.wait() end
         end
         if not DigState.Running then return end
-        local hitTime = Workspace:GetServerTimeNow()
+        local hitTime = serverTime()
         local hOk, hResp = pcall(function()
             return DigComm:Hit(session.Id, session.Round.Sequence, hitTime)
         end)
@@ -1514,12 +1554,8 @@ if EggConfig then
     for eggName in pairs(EggConfig) do table.insert(EggOptions, eggName) end
     table.sort(EggOptions)
 end
-if #EggOptions == 0 then
-    EggOptions = { "None" }
-    HatchState.SelectedEgg = "None"
-else
-    HatchState.SelectedEgg = EggOptions[1]
-end
+if #EggOptions == 0 then EggOptions = { "None" } end
+HatchState.SelectedEgg = EggOptions[1]
 PetsTab:Dropdown({
     Title  = "Select Egg",
     Desc   = "Choose which egg to hatch.",
@@ -1816,9 +1852,7 @@ if MachineConfig and MachineConfig.Golden and MachineConfig.Golden.Chances then
         table.insert(CraftPetsOptions, string.format("%d Pets (%d%%)", i, chance))
     end
 end
-if #CraftPetsOptions == 0 then
-    CraftPetsOptions = { "6 Pets" }
-end
+if #CraftPetsOptions == 0 then CraftPetsOptions = { "6 Pets" } end
 CraftTab:Dropdown({
     Title  = "Pets to Use",
     Desc   = "Number of pets consumed per Golden craft.",
@@ -1956,9 +1990,18 @@ task.spawn(function()
     end
 end)
 
-Notify({
-    Title = "Tap Simulator REBORN",
-    Content = "Loaded. Toggle anything to start.",
-    Icon = "check",
-    Duration = 5,
-})
+if #MissingModules > 0 then
+    Notify({
+        Title = "Tap Simulator REBORN",
+        Content = "Loaded with limited features. Missing: " .. table.concat(MissingModules, ", "),
+        Icon = "alert-triangle",
+        Duration = 8,
+    })
+else
+    Notify({
+        Title = "Tap Simulator REBORN",
+        Content = "Loaded. Toggle anything to start.",
+        Icon = "check",
+        Duration = 5,
+    })
+end
