@@ -23,7 +23,7 @@ local okWindow, createdWindow = pcall(function()
         subtitle = "by Ovei",
         icon = "star",
         theme = "cobalt",
-        sidebarLayout = true,
+        sidebarLayout = false,
         showName = "[ðŸŽƒ] Tap Simulator REBORN",
         showIcon = "star",
         configuration = {
@@ -1338,11 +1338,24 @@ local function colosseumStop()
     end
 end
 
-local FarmTab     = Window:CreateTab({ name = "Farm",     icon = "mouse-pointer" })
-local PetsTab     = Window:CreateTab({ name = "Pets",     icon = "egg" })
-local ChestsTab   = Window:CreateTab({ name = "Chests",   icon = "package" })
-local GamesTab    = Window:CreateTab({ name = "Games",    icon = "swords" })
-local CraftTab    = Window:CreateTab({ name = "Crafting", icon = "cog" })
+local FarmTab, PetsTab, ChestsTab, GamesTab, CraftTab
+local okTabs, tabError = pcall(function()
+    FarmTab   = Window:CreateTab({ name = "Farm",     icon = "mouse-pointer" })
+    PetsTab   = Window:CreateTab({ name = "Pets",     icon = "egg" })
+    ChestsTab = Window:CreateTab({ name = "Chests",   icon = "package" })
+    GamesTab  = Window:CreateTab({ name = "Games",    icon = "swords" })
+    CraftTab  = Window:CreateTab({ name = "Crafting", icon = "cog" })
+end)
+
+if not okTabs then
+    local message = tostring(tabError)
+    warn("[Tap Simulator REBORN] Rayfield Gen2 could not create tabs: " .. message)
+    if string.find(message, "capability Plugin", 1, true) then
+        warn("[Tap Simulator REBORN] The current execution context denied a UI operation. The script cannot grant the missing capability; use a supported client-side context.")
+    end
+    pcall(function() Window:Unload() end)
+    return
+end
 
 FarmTab:CreateSection({ name = "Auto Tap" })
 FarmTab:CreateSlider({
