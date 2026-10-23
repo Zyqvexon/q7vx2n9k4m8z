@@ -1,15 +1,17 @@
 task.wait(2)
 
-getgenv().gethui = function()
-    return game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+if not getgenv().gethui then
+    getgenv().gethui = function()
+        return game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    end
 end
 
-local okWind, WindUI = pcall(function()
-    return loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/download/1.6.66/main.lua"))()
+local okLoad, Rayfield = pcall(function()
+    return loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 end)
 
-if not okWind or not WindUI then
-    warn("[Tap Simulator REBORN] WindUI load failed")
+if not okLoad or not Rayfield then
+    warn("[Tap Simulator REBORN] Rayfield load failed")
     return
 end
 
@@ -93,8 +95,15 @@ local ClaimQuestRE  = getRemote("QuestService", "RE", "ClaimQuest")
 
 local ColosseumNetwork = ColosseumAdapter and ColosseumAdapter.Network or nil
 
+local window
 local function Notify(cfg)
-    pcall(function() WindUI:Notify(cfg) end)
+    if window then
+        window:Notify({
+            title = cfg.Title,
+            content = cfg.Content,
+            duration = cfg.Duration or 5
+        })
+    end
 end
 
 local function getData()
@@ -123,7 +132,7 @@ local function TeleportTo(targetPos)
         local dist = (hrp.Position - targetPos).Magnitude
         if dist <= 10 then return true end
         local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
+        if humanoid then pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.Physics) end) end
         hrp.Anchored = true
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
@@ -132,7 +141,7 @@ local function TeleportTo(targetPos)
             task.wait(0.05)
         end
         hrp.Anchored = false
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        if humanoid then pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end) end
         task.wait(0.4)
         hrp = char:FindFirstChild("HumanoidRootPart")
         if hrp and (hrp.Position - targetPos).Magnitude <= 15 then return true end
@@ -140,12 +149,18 @@ local function TeleportTo(targetPos)
     return false
 end
 
+local function restoreCFrame(savedCF)
+    if not savedCF then return end
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then hrp.CFrame = savedCF end
+end
+
 local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0 }
 
 if TapRemote then
     task.spawn(function()
         while true do
-            task.wait(TapState.Delay)
+            task.wait(math.max(TapState.Delay, 0.01))
             if not TapState.Running then continue end
             TapState.Seq = TapState.Seq + 1
             local ok = pcall(function()
@@ -157,13 +172,17 @@ if TapRemote then
 end
 
 local RebirthState = { Selected = false, Highest = false, SelectedIndex = 1, Delay = 1, Count = 0 }
-local RebirthOptions = {}
-local RebirthIndexByName = {}
+local RebirthOptions = { "1" }
+local RebirthIndexByName = { ["1"] = 1 }
 
 local function rebuildRebirthOptions()
     RebirthOptions = {}
     RebirthIndexByName = {}
-    if not RebirthConfig then return end
+    if not RebirthConfig then
+        RebirthOptions = { "1" }
+        RebirthIndexByName["1"] = 1
+        return
+    end
     local maxOptions = 5
     local data = getData()
     if data and RebirthButtonConfig then
@@ -181,6 +200,10 @@ local function rebuildRebirthOptions()
             RebirthIndexByName[label] = i
         end
     end
+    if #RebirthOptions == 0 then
+        RebirthOptions = { "1" }
+        RebirthIndexByName["1"] = 1
+    end
 end
 
 rebuildRebirthOptions()
@@ -194,6 +217,7 @@ if RebirthRemote and RebirthConfig then
             if not data then continue end
             local coins = (data.Currencies and data.Currencies.Coins) or 0
             local rebirths = (data.Statistics and data.Statistics.Rebirths) or 0
+            local fired = false
             if RebirthState.Highest then
                 local bestIdx = 0
                 for i = 1, #RebirthOptions do
@@ -203,18 +227,20 @@ if RebirthRemote and RebirthConfig then
                     if ok2 and price and coins >= price then bestIdx = i else break end
                 end
                 if bestIdx > 0 then
-                    pcall(function() RebirthRemote:FireServer({ Index = bestIdx }) end)
-                    RebirthState.Count = RebirthState.Count + 1
+                    fired = pcall(function() RebirthRemote:FireServer({ Index = bestIdx }) end)
                 end
             elseif RebirthState.Selected then
                 local ok, amt = pcall(function() return RebirthConfig.GetAmountFromIndex(RebirthState.SelectedIndex) end)
                 if ok and amt then
                     local ok2, price = pcall(function() return RebirthConfig.GetPrice(amt, rebirths) end)
                     if ok2 and price and coins >= price then
-                        pcall(function() RebirthRemote:FireServer({ Index = RebirthState.SelectedIndex }) end)
-                        RebirthState.Count = RebirthState.Count + 1
+                        fired = pcall(function() RebirthRemote:FireServer({ Index = RebirthState.SelectedIndex }) end)
                     end
                 end
+            end
+            if fired then
+                RebirthState.Count = RebirthState.Count + 1
+                task.wait(0.1)
             end
         end
     end)
@@ -245,18 +271,15 @@ local function attemptBuyJump()
     end
     if type(currency) ~= "number" or currency < price then return false end
     local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local savedPos = hrp and hrp.Position or nil
+    local savedCF = hrp and hrp.CFrame or nil
     local machine = Workspace:FindFirstChild("double jump machine")
     if machine then
         local pos = getPartPos(machine)
-        if pos then TeleportTo(pos) end
+        if pos and not TeleportTo(pos) then return false end
     end
     local success = pcall(function() JumpRemote:InvokeServer({ Index = nextIdx, Upgrade = "+1 Jump" }) end)
-    if success and savedPos then
-        task.delay(1, function()
-            local hrp2 = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp2 then TeleportTo(savedPos) end
-        end)
+    if success and savedCF then
+        task.delay(1.5, function() restoreCFrame(savedCF) end)
     end
     return success
 end
@@ -278,35 +301,40 @@ task.spawn(function()
         task.wait(SkillState.Delay)
         if not SkillState.Running then continue end
         if not SkillTreeService or not SkillTreeConfig or not SkillTreeFormula or not SkillTreeRequirements then continue end
-        local data = getData()
-        if not data then continue end
-        local unlocked = (data.SkillTree and data.SkillTree.Unlocked) or {}
-        local gems = (data.Currencies and data.Currencies.Gems) or 0
-        local function scan(node, parentUnlocked)
-            if type(node) ~= "table" or not node.Name then return false end
-            if unlocked[node.Name] or node.Origin then
-                for _, dir in ipairs({"N", "S", "NE", "NW", "SE", "SW"}) do
-                    if type(node[dir]) == "table" and scan(node[dir], true) then return true end
-                end
-            elseif parentUnlocked and not node.Category and not node.Origin then
-                local ok1, price = pcall(function() return SkillTreeFormula.GetPrice(data, node.Name) end)
-                if ok1 and price and price <= gems then
-                    local ok2, lockedShop = pcall(function() return SkillTreeRequirements.GetLockedShop(data, node) end)
-                    local ok3, lockedIsland = pcall(function() return SkillTreeRequirements.GetLockedIsland(data, node) end)
-                    local ok4, withheld = pcall(function() return SkillTreeFormula.IsWithheld(data, node.Name) end)
-                    if ok2 and not lockedShop and ok3 and not lockedIsland and ok4 and not withheld then
-                        local ok5, res = pcall(function() return SkillTreeService:Unlock({ Name = node.Name }) end)
-                        if ok5 and type(res) == "table" and res.Success then
-                            SkillState.Count = SkillState.Count + 1
-                            return true
+        local bought = true
+        while bought do
+            bought = false
+            local data = getData()
+            if not data then break end
+            local unlocked = (data.SkillTree and data.SkillTree.Unlocked) or {}
+            local gems = (data.Currencies and data.Currencies.Gems) or 0
+            local function scan(node, parentUnlocked)
+                if type(node) ~= "table" or not node.Name then return false end
+                if unlocked[node.Name] or node.Origin then
+                    for _, dir in ipairs({"N", "S", "NE", "NW", "SE", "SW"}) do
+                        if type(node[dir]) == "table" and scan(node[dir], true) then return true end
+                    end
+                elseif parentUnlocked and not node.Category and not node.Origin then
+                    local ok1, price = pcall(function() return SkillTreeFormula.GetPrice(data, node.Name) end)
+                    if ok1 and price and price <= gems then
+                        local ok2, lockedShop = pcall(function() return SkillTreeRequirements.GetLockedShop(data, node) end)
+                        local ok3, lockedIsland = pcall(function() return SkillTreeRequirements.GetLockedIsland(data, node) end)
+                        local ok4, withheld = pcall(function() return SkillTreeFormula.IsWithheld(data, node.Name) end)
+                        if ok2 and not lockedShop and ok3 and not lockedIsland and ok4 and not withheld then
+                            local ok5, res = pcall(function() return SkillTreeService:Unlock({ Name = node.Name }) end)
+                            if ok5 and type(res) == "table" and res.Success then
+                                SkillState.Count = SkillState.Count + 1
+                                return true
+                            end
                         end
                     end
                 end
+                return false
             end
-            return false
-        end
-        for _, tree in pairs(SkillTreeConfig) do
-            if scan(tree, true) then break end
+            for _, tree in pairs(SkillTreeConfig) do
+                if scan(tree, true) then bought = true; break end
+            end
+            if bought then task.wait(0.15) end
         end
     end
 end)
@@ -319,8 +347,9 @@ task.spawn(function()
         if not QuestState.Running then continue end
         local data = getData()
         if not data or not data.Quests or not QuestConfig then continue end
+        local defs = QuestConfig.Definitions or QuestConfig
         for name, qData in pairs(data.Quests) do
-            local config = QuestConfig.Definitions and QuestConfig.Definitions[name]
+            local config = defs[name]
             if config and not qData.Claimed then
                 local completed = qData.Completed
                 local amount = qData.Amount or 0
@@ -356,137 +385,13 @@ if EggService then
     end)
 end
 
-local function getEggPos(eggName)
-    local eggsFolder = Workspace:FindFirstChild("Eggs")
-    if not eggsFolder then return nil end
-    local eggModel = eggsFolder:FindFirstChild(eggName)
-    if not eggModel then return nil end
-    return getPartPos(eggModel)
-end
-
-task.spawn(function()
-    while true do
-        task.wait(0.1)
-        if HatchState.isRequestPending then continue end
-        if not HatchState.HatchRunning then continue end
-        if not (EggService and EggConfig and EggPricing) then continue end
-        local data = getData()
-        if not data then continue end
-        if os.clock() - HatchState.lastHatchResultTime < HatchState.HatchDelay then continue end
-        local invCount = 0
-        for _ in pairs((data.Pets and data.Pets.Owned) or {}) do invCount = invCount + 1 end
-        local limit = (data.Pets and data.Pets.StorageLimit) or math.huge
-        if invCount >= limit then continue end
-        if not HatchState.SelectedEgg or not EggConfig[HatchState.SelectedEgg] then continue end
-        local ok, price = pcall(function()
-            return EggPricing.GetTotal(data, HatchState.SelectedEgg, EggConfig[HatchState.SelectedEgg].Price, HatchState.SelectedAmount)
-        end)
-        local coins = (data.Currencies and data.Currencies.Coins) or 0
-        if not (ok and price and coins >= price) then continue end
-        if HatchState.SelectedAmount == 8 and GamepassPerks and BoostFormula then
-            local hasPerk = false
-            pcall(function() hasPerk = GamepassPerks.Has(data, "x8Egg") end)
-            local hasBoost = false
-            pcall(function() hasBoost = BoostFormula.HasType(data, "OctoHatch") end)
-            if not hasPerk and not hasBoost then
-                HatchState.Status = "x8 Gamepass required"
-                continue
-            end
-        end
-        local pos = getEggPos(HatchState.SelectedEgg)
-        if not pos then
-            HatchState.Status = "Egg not loaded"
-            continue
-        end
-        TeleportTo(pos)
-        HatchState.isRequestPending = true
-        pcall(function()
-            EggService.EggHatchRequested:Fire({
-                Egg = HatchState.SelectedEgg,
-                Count = HatchState.SelectedAmount,
-                Auto = true,
-                Seq = math.random(1, 100000),
-            })
-        end)
-        HatchState.Hatched = HatchState.Hatched + 1
-        HatchState.Status = "Hatched | total " .. HatchState.Hatched
-        task.delay(3, function() if HatchState.isRequestPending then HatchState.isRequestPending = false end end)
-    end
-end)
-
-local ItemState = {
-    BoostRunning = false, GiftRunning = false, TreatRunning = false, TotemRunning = false,
-    Delay = 1, SelectedBoosts = {}, SelectedGifts = {}, SelectedTreats = {}, SelectedTotems = {},
-    Used = 0,
-}
-
-task.spawn(function()
-    while true do
-        task.wait(ItemState.Delay)
-        local data = getData()
-        if not data then continue end
-        local function hasItem(name)
-            local items = (data.Items and data.Items.Owned) or {}
-            return (items[name] or 0) > 0
-        end
-        if ItemState.BoostRunning and BoostRemote then
-            local boosts = data.Boosts or {}
-            for _, name in ipairs(ItemState.SelectedBoosts) do
-                if (boosts[name] or 0) > 0 then
-                    local ok = pcall(function() BoostRemote:InvokeServer(name) end)
-                    if ok then ItemState.Used = ItemState.Used + 1 end
-                    break
-                end
-            end
-        end
-        if ItemState.GiftRunning and GiftController then
-            for _, name in ipairs(ItemState.SelectedGifts) do
-                if hasItem(name) then
-                    local ok = pcall(function() GiftController:Open(name, 1) end)
-                    if ok then ItemState.Used = ItemState.Used + 1 end
-                    break
-                end
-            end
-        end
-        if ItemState.TreatRunning and ItemService then
-            local petId = nil
-            for id in pairs((data.Pets and data.Pets.Owned) or {}) do petId = id; break end
-            if petId then
-                for _, name in ipairs(ItemState.SelectedTreats) do
-                    if hasItem(name) then
-                        local ok = pcall(function()
-                            ItemService:UseOnPet({ Item = name, PetId = petId, Amount = 1 })
-                        end)
-                        if ok then ItemState.Used = ItemState.Used + 1 end
-                        break
-                    end
-                end
-            end
-        end
-        if ItemState.TotemRunning and ItemService then
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                for _, name in ipairs(ItemState.SelectedTotems) do
-                    if hasItem(name) then
-                        local ok = pcall(function()
-                            ItemService:PlaceTotem({ TotemName = name, Position = hrp.Position + hrp.CFrame.LookVector * 5 })
-                        end)
-                        if ok then ItemState.Used = ItemState.Used + 1 end
-                        break
-                    end
-                end
-            end
-        end
-    end
-end)
-
 local CraftState = {
     GoldenRunning = false,
     PetsToUse = 6,
     SelectedMutation = "None",
     isRequestPending = false,
     lastCraftResultTime = 0,
-    GoldenCrafted = 0,
+    GoldenCrafted = 0, Status = "Idle",
 }
 
 if MachineService then
@@ -496,6 +401,14 @@ if MachineService then
             CraftState.lastCraftResultTime = os.clock()
         end)
     end)
+end
+
+local function getEggPos(eggName)
+    local eggsFolder = Workspace:FindFirstChild("Eggs")
+    if not eggsFolder then return nil end
+    local eggModel = eggsFolder:FindFirstChild(eggName)
+    if not eggModel then return nil end
+    return getPartPos(eggModel)
 end
 
 local function getGoldenMachinePos()
@@ -522,38 +435,186 @@ local function petMatchesMutation(pet, mutation)
     return false
 end
 
+local function hasCraftablePets(data)
+    if not data or not data.Pets or not data.Pets.Owned then return false end
+    local count = 0
+    for _, pet in pairs(data.Pets.Owned) do
+        if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen and not pet.Enchant and not pet.Signature then
+            if petMatchesMutation(pet, CraftState.SelectedMutation) then
+                count = count + 1
+                if count >= CraftState.PetsToUse then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function tryCraftGolden(data)
+    if not MachineService then return false end
+    local groups = {}
+    local owned = (data.Pets and data.Pets.Owned) or {}
+    for id, pet in pairs(owned) do
+        if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen and not pet.Enchant and not pet.Signature then
+            if petMatchesMutation(pet, CraftState.SelectedMutation) then
+                if not groups[pet.Name] then groups[pet.Name] = {} end
+                table.insert(groups[pet.Name], id)
+            end
+        end
+    end
+    for _, ids in pairs(groups) do
+        if #ids >= CraftState.PetsToUse then
+            local selected = {}
+            for i = 1, CraftState.PetsToUse do table.insert(selected, ids[i]) end
+            local pos = getGoldenMachinePos()
+            if pos and not TeleportTo(pos) then return false end
+            CraftState.isRequestPending = true
+            local ok = pcall(function()
+                MachineService.MachineCraftRequested:Fire({ Machine = "Golden", PetIds = selected })
+            end)
+            if ok then
+                CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
+                CraftState.Status = "Crafted | total " .. CraftState.GoldenCrafted
+                task.delay(5, function() if CraftState.isRequestPending then CraftState.isRequestPending = false end end)
+                return true
+            end
+            CraftState.isRequestPending = false
+            return false
+        end
+    end
+    return false
+end
+
+local function tryHatchEgg(data)
+    if not (EggService and EggConfig and EggPricing) then return false end
+    local invCount = 0
+    for _ in pairs((data.Pets and data.Pets.Owned) or {}) do invCount = invCount + 1 end
+    local limit = (data.Pets and data.Pets.StorageLimit) or math.huge
+    if invCount >= limit then return false end
+    if not HatchState.SelectedEgg or not EggConfig[HatchState.SelectedEgg] then return false end
+    local ok, price = pcall(function()
+        return EggPricing.GetTotal(data, HatchState.SelectedEgg, EggConfig[HatchState.SelectedEgg].Price, HatchState.SelectedAmount)
+    end)
+    local coins = (data.Currencies and data.Currencies.Coins) or 0
+    if not (ok and price and coins >= price) then return false end
+    if HatchState.SelectedAmount == 8 then
+        local hasPerk = false
+        local hasBoost = false
+        if GamepassPerks then pcall(function() hasPerk = GamepassPerks.Has(data, "x8Egg") end) end
+        if BoostFormula then pcall(function() hasBoost = BoostFormula.HasType(data, "OctoHatch") end) end
+        if (GamepassPerks or BoostFormula) and not hasPerk and not hasBoost then
+            HatchState.Status = "x8 Gamepass required"
+            return false
+        end
+    end
+    local pos = getEggPos(HatchState.SelectedEgg)
+    if not pos then
+        HatchState.Status = "Egg not loaded"
+        return false
+    end
+    if not TeleportTo(pos) then
+        HatchState.Status = "Teleport failed"
+        return false
+    end
+    HatchState.isRequestPending = true
+    local fired = pcall(function()
+        EggService.EggHatchRequested:Fire({
+            Egg = HatchState.SelectedEgg,
+            Count = HatchState.SelectedAmount,
+            Auto = true,
+            Seq = math.random(1, 100000),
+        })
+    end)
+    if fired then
+        HatchState.Hatched = HatchState.Hatched + 1
+        HatchState.Status = "Hatched | total " .. HatchState.Hatched
+        task.delay(3, function() if HatchState.isRequestPending then HatchState.isRequestPending = false end end)
+        return true
+    end
+    HatchState.isRequestPending = false
+    return false
+end
+
 task.spawn(function()
     while true do
         task.wait(0.1)
-        if CraftState.isRequestPending then continue end
-        if not CraftState.GoldenRunning then continue end
-        if not MachineService then continue end
+        if HatchState.isRequestPending or CraftState.isRequestPending then continue end
+        if not (HatchState.HatchRunning or CraftState.GoldenRunning) then continue end
         local data = getData()
         if not data then continue end
-        if os.clock() - CraftState.lastCraftResultTime < 1 then continue end
-        local groups = {}
-        local owned = (data.Pets and data.Pets.Owned) or {}
-        for id, pet in pairs(owned) do
-            if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen and not pet.Enchant and not pet.Signature then
-                if petMatchesMutation(pet, CraftState.SelectedMutation) then
-                    if not groups[pet.Name] then groups[pet.Name] = {} end
-                    table.insert(groups[pet.Name], id)
+        local now = os.clock()
+        if CraftState.GoldenRunning and now - CraftState.lastCraftResultTime >= 1 then
+            if tryCraftGolden(data) then continue end
+        end
+        if HatchState.HatchRunning and now - HatchState.lastHatchResultTime >= HatchState.HatchDelay then
+            if CraftState.GoldenRunning and hasCraftablePets(data) then continue end
+            tryHatchEgg(data)
+        end
+    end
+end)
+
+local ItemState = {
+    BoostRunning = false, GiftRunning = false, TreatRunning = false, TotemRunning = false,
+    Delay = 1, SelectedBoosts = {}, SelectedGifts = {}, SelectedTreats = {}, SelectedTotems = {},
+    Used = 0,
+}
+
+task.spawn(function()
+    while true do
+        task.wait(ItemState.Delay)
+        local data = getData()
+        if not data then continue end
+        local items = (data.Items and data.Items.Owned) or {}
+        local function hasItem(name) return (items[name] or 0) > 0 end
+        if ItemState.BoostRunning and BoostRemote then
+            local boosts = data.Boosts or {}
+            for _, name in ipairs(ItemState.SelectedBoosts) do
+                if (boosts[name] or 0) > 0 then
+                    if pcall(function() BoostRemote:InvokeServer(name) end) then
+                        ItemState.Used = ItemState.Used + 1
+                    end
+                    break
                 end
             end
         end
-        for _, ids in pairs(groups) do
-            if #ids >= CraftState.PetsToUse then
-                local selected = {}
-                for i = 1, CraftState.PetsToUse do table.insert(selected, ids[i]) end
-                CraftState.isRequestPending = true
-                local pos = getGoldenMachinePos()
-                if pos then TeleportTo(pos) end
-                pcall(function()
-                    MachineService.MachineCraftRequested:Fire({ Machine = "Golden", PetIds = selected })
-                end)
-                CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
-                task.delay(5, function() if CraftState.isRequestPending then CraftState.isRequestPending = false end end)
-                break
+        if ItemState.GiftRunning and GiftController then
+            for _, name in ipairs(ItemState.SelectedGifts) do
+                if hasItem(name) then
+                    if pcall(function() GiftController:Open(name, 1) end) then
+                        ItemState.Used = ItemState.Used + 1
+                    end
+                    break
+                end
+            end
+        end
+        if ItemState.TreatRunning and ItemService then
+            local petId = nil
+            for id in pairs((data.Pets and data.Pets.Owned) or {}) do petId = id; break end
+            if petId then
+                for _, name in ipairs(ItemState.SelectedTreats) do
+                    if hasItem(name) then
+                        if pcall(function()
+                            ItemService:UseOnPet({ Item = name, PetId = petId, Amount = 1 })
+                        end) then
+                            ItemState.Used = ItemState.Used + 1
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        if ItemState.TotemRunning and ItemService then
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                for _, name in ipairs(ItemState.SelectedTotems) do
+                    if hasItem(name) then
+                        if pcall(function()
+                            ItemService:PlaceTotem({ TotemName = name, Position = hrp.Position + hrp.CFrame.LookVector * 5 })
+                        end) then
+                            ItemState.Used = ItemState.Used + 1
+                        end
+                        break
+                    end
+                end
             end
         end
     end
@@ -781,10 +842,10 @@ local function processTapChest(model, timeout)
     if not TeleportTo(pos) then return false, "unreachable" end
     if TapChestController then
         pcall(function() TapChestController:Interact(model) end)
-        local deadline = os.clock() + (timeout or 20)
+        local deadline = os.clock() + (timeout or 8)
         while os.clock() < deadline do
             if not isChestReady(model) then return true, "opened" end
-            task.wait(0.5)
+            task.wait(0.2)
         end
     end
     local chestId = getChestId(model)
@@ -808,7 +869,7 @@ task.spawn(function()
             end
             for _, model in ready do
                 if not (TapChestState.CollectRunning or TapChestState.OpenRunning) then break end
-                local timeout = TapChestState.OpenRunning and 25 or 20
+                local timeout = TapChestState.OpenRunning and 10 or 8
                 local success, info = processTapChest(model, timeout)
                 if success then
                     if TapChestState.CollectRunning then
@@ -956,49 +1017,49 @@ local function processOneDigGame()
     local zone = getDigZone()
     if not zone then
         DigState.Status = "Dig site not found"
-        return true
+        return
     end
     if not isInDigZone() then
         local pos = getPartPos(zone)
         if not pos then
             DigState.Status = "Zone has no position"
-            return true
+            return
         end
         DigState.Status = "Teleporting to site..."
         TeleportTo(pos)
         local deadline = os.clock() + 3
         while os.clock() < deadline do
-            if not DigState.Running then return false end
+            if not DigState.Running then return end
             if isInDigZone() then break end
             task.wait(0.1)
         end
         if not isInDigZone() then
             DigState.Status = "Not detected at site"
-            return true
+            return
         end
     end
     local ok, resp = pcall(function() return DigComm:Begin() end)
     if not ok or not resp then
         DigState.Status = "Begin failed"
         task.wait(0.5)
-        return true
+        return
     end
     if resp.Error then
         if resp.Error == "Cooldown" then
             local mins = math.ceil((resp.Remaining or 0) / 60)
             DigState.Status = string.format("Cooldown %dm", mins)
-            Notify({Title = "Auto Dig", Content = "Out of digs. Wait " .. mins .. " min.", Icon = "clock", Duration = 4})
+            Notify({Title = "Auto Dig", Content = "Out of digs. Wait " .. mins .. " min."})
             DigState.Running = false
-            return false
+            return
         end
         DigState.Status = "Begin error: " .. tostring(resp.Error)
         task.wait(1)
-        return true
+        return
     end
     if not resp.Id then
         DigState.Status = "Session missing Id"
         task.wait(1)
-        return true
+        return
     end
     DigState.Session = resp
     while DigState.Running and DigState.Session do
@@ -1026,7 +1087,7 @@ local function processOneDigGame()
             if remaining > 0.05 then task.wait(math.min(remaining - 0.02, 0.1))
             else task.wait() end
         end
-        if not DigState.Running then return false end
+        if not DigState.Running then return end
         local hitTime = Workspace:GetServerTimeNow()
         local hOk, hResp = pcall(function()
             return DigComm:Hit(session.Id, session.Round.Sequence, hitTime)
@@ -1045,7 +1106,7 @@ local function processOneDigGame()
                 local mins = math.ceil((hResp.Remaining or 0) / 60)
                 DigState.Status = string.format("Cooldown %dm", mins)
                 DigState.Running = false
-                return false
+                return
             elseif hResp.Error == "TooSoon" then
                 task.wait(0.1)
             elseif hResp.Error == "Busy" then
@@ -1064,7 +1125,7 @@ local function processOneDigGame()
                 DigState.LastReward = hResp.Reward
                 DigState.Status = "Done: " .. tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1)
                 DigState.Session = nil
-                Notify({Title = "Dig Complete", Content = tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1), Icon = "check", Duration = 3})
+                Notify({Title = "Dig Complete", Content = tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1)})
                 task.wait(1.1)
                 break
             else
@@ -1073,7 +1134,6 @@ local function processOneDigGame()
             end
         end
     end
-    return true
 end
 
 task.spawn(function()
@@ -1085,7 +1145,8 @@ task.spawn(function()
             DigState.Running = false
             continue
         end
-        processOneDigGame()
+        local ok, err = pcall(processOneDigGame)
+        if not ok then warn("[Dig] " .. tostring(err)) end
     end
     cancelDigSession()
 end)
@@ -1207,35 +1268,36 @@ end
 local function colosseumStart()
     if not ColosseumNetwork then return false, "Network unavailable" end
     if ColosseumState.Active then return true end
-    ColosseumState.Status = "Teleporting to arena..."
+    ColosseumState.Status = "Waiting for arena..."
     ColosseumState.Opponents = {}
     ColosseumState.Waves = 0
+    local deadline = os.clock() + 5
+    while not getColosseumArena() and os.clock() < deadline do
+        task.wait(0.2)
+    end
     local arenaPos = getColosseumArenaPos()
     if arenaPos then
+        ColosseumState.Status = "Teleporting to arena..."
         TeleportTo(arenaPos)
-        task.wait(0.6)
+        task.wait(0.8)
+    else
+        ColosseumState.Status = "Arena not found"
+        return false, "Arena not found"
     end
     if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
         pcall(function() ColosseumAdapter:SetActive(true) end)
-        task.wait(0.25)
+        task.wait(0.3)
     end
     ColosseumState.Status = "Starting wave defense..."
     local ok, resp = pcall(function()
         return ColosseumNetwork:InvokeServer("StartWaveDefense")
     end)
-    if not ok then
-        ColosseumState.Status = "Invoke error"
+    if not ok or not resp then
+        ColosseumState.Status = "Invoke failed"
         if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
             pcall(function() ColosseumAdapter:SetActive(false) end)
         end
-        return false, "Invoke error"
-    end
-    if not resp then
-        ColosseumState.Status = "No response"
-        if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
-            pcall(function() ColosseumAdapter:SetActive(false) end)
-        end
-        return false, "No response"
+        return false, "Invoke failed"
     end
     if type(resp) == "table" and (resp.OnCooldown or resp.Error) then
         local errMsg = tostring(resp.Error or "On cooldown")
@@ -1262,6 +1324,7 @@ local function colosseumStart()
 end
 
 local function colosseumStop()
+    if not ColosseumState.Active then return end
     ColosseumState.Active = false
     ColosseumState.Status = "Stopping..."
     if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
@@ -1277,74 +1340,65 @@ local function colosseumStop()
     end
 end
 
-local Window = WindUI:CreateWindow({
-    Title     = "[🎃] Tap Simulator REBORN",
-    Author    = "by Ovei",
-    Icon      = "star",
-    Folder    = "TapSimulatorReborn",
-    Size      = UDim2.fromOffset(540, 560),
-    ToggleKey = Enum.KeyCode.RightShift,
-    Theme     = "Dark",
-    Resizable = true,
-    AutoScale = true,
+window = Rayfield:CreateWindow({
+    name = "[🎃] Tap Simulator REBORN",
+    subtitle = "by Ovei",
+    theme = "cobalt",
+    sidebarLayout = true,
+    configuration = {
+        autoSave = true,
+        autoLoad = true,
+        fileName = "TapSimulatorReborn",
+        customFolder = "OveiHub"
+    }
 })
 
-local FarmTab     = Window:Tab({ Title = "Farm",     Icon = "mouse-pointer" })
-local PetsTab     = Window:Tab({ Title = "Pets",     Icon = "egg" })
-local ChestsTab   = Window:Tab({ Title = "Chests",   Icon = "package" })
-local GamesTab    = Window:Tab({ Title = "Games",    Icon = "swords" })
-local CraftTab    = Window:Tab({ Title = "Crafting", Icon = "cog" })
+local FarmTab     = window:CreateTab({ name = "Farm" })
+local PetsTab     = window:CreateTab({ name = "Pets" })
+local ChestsTab   = window:CreateTab({ name = "Chests" })
+local GamesTab    = window:CreateTab({ name = "Games" })
+local CraftTab    = window:CreateTab({ name = "Crafting" })
 
-FarmTab:Section({ Title = "Auto Tap", Opened = true })
-FarmTab:Slider({
-    Title = "Tap Speed",
-    Desc  = "How fast taps are sent to the server.",
-    Step  = 0.01,
-    Value = { Min = 0, Max = 0.5, Default = 0.01 },
-    Callback = function(v) TapState.Delay = v end,
+FarmTab:CreateSection({ name = "Auto Tap" })
+FarmTab:CreateSlider({
+    name = "Tap Speed",
+    description = "Delay between each tap. Lower means faster tapping.",
+    range = {0.01, 0.5},
+    increment = 0.01,
+    value = 0.01,
+    callback = function(v) TapState.Delay = v end,
 })
-FarmTab:Toggle({
-    Title = "Auto Tap",
-    Desc  = "Taps the screen automatically for you.",
-    Value = false,
-    Flag  = "autoTap",
-    Callback = function(v) TapState.Running = v end,
+FarmTab:CreateToggle({
+    name = "Auto Tap",
+    description = "Automatically taps the screen for you.",
+    value = false,
+    flag = "autoTap",
+    callback = function(v) TapState.Running = v end,
 })
 
-FarmTab:Section({ Title = "Auto Rebirth", Opened = false })
-local RebirthDropdown
-RebirthDropdown = FarmTab:Dropdown({
-    Title  = "Rebirth Amount",
-    Desc   = "Select the specific rebirth tier to buy.",
-    Values = RebirthOptions,
-    Value  = RebirthOptions[1],
-    Callback = function(v) RebirthState.SelectedIndex = RebirthIndexByName[v] or 1 end,
+FarmTab:CreateSection({ name = "Auto Rebirth" })
+FarmTab:CreateDropdown({
+    name = "Rebirth Amount",
+    description = "Pick which rebirth tier to purchase.",
+    options = RebirthOptions,
+    value = RebirthOptions[1],
+    callback = function(selected) RebirthState.SelectedIndex = RebirthIndexByName[selected[1]] or 1 end,
 })
-FarmTab:Button({
-    Title = "Refresh Rebirth List",
-    Desc  = "Updates the dropdown based on your unlocked tiers.",
-    Icon  = "refresh-cw",
-    Callback = function()
+FarmTab:CreateButton({
+    name = "Refresh Rebirth List",
+    description = "Updates the list based on your unlocked tiers (Re-execute if needed).",
+    callback = function()
         rebuildRebirthOptions()
-        if RebirthDropdown then
-            pcall(function() RebirthDropdown:Refresh(RebirthOptions) end)
-            local label = tostring(RebirthOptions[RebirthState.SelectedIndex] or RebirthOptions[1])
-            if RebirthIndexByName[label] then
-                pcall(function() RebirthDropdown:Select(label) end)
-            else
-                RebirthState.SelectedIndex = 1
-                pcall(function() RebirthDropdown:Select(RebirthOptions[1]) end)
-            end
-        end
+        window:Toast({ title = "Rebirth List Updated", subtitle = "Check dropdown options" })
     end,
 })
 local RebirthSelectedToggle, RebirthHighestToggle
-RebirthSelectedToggle = FarmTab:Toggle({
-    Title = "Buy Selected Rebirth",
-    Desc  = "Purchases the rebirth tier chosen in the dropdown.",
-    Value = false,
-    Flag  = "buySelectedRebirth",
-    Callback = function(v)
+RebirthSelectedToggle = FarmTab:CreateToggle({
+    name = "Buy Selected Rebirth",
+    description = "Purchases the rebirth tier chosen above.",
+    value = false,
+    flag = "buySelectedRebirth",
+    callback = function(v)
         RebirthState.Selected = v
         if v and RebirthState.Highest then
             RebirthState.Highest = false
@@ -1352,12 +1406,12 @@ RebirthSelectedToggle = FarmTab:Toggle({
         end
     end,
 })
-RebirthHighestToggle = FarmTab:Toggle({
-    Title = "Buy Highest Rebirth",
-    Desc  = "Purchases the highest rebirth you can currently afford.",
-    Value = false,
-    Flag  = "buyHighestRebirth",
-    Callback = function(v)
+RebirthHighestToggle = FarmTab:CreateToggle({
+    name = "Buy Highest Rebirth",
+    description = "Purchases the highest rebirth tier you can afford.",
+    value = false,
+    flag = "buyHighestRebirth",
+    callback = function(v)
         RebirthState.Highest = v
         if v and RebirthState.Selected then
             RebirthState.Selected = false
@@ -1365,121 +1419,119 @@ RebirthHighestToggle = FarmTab:Toggle({
         end
     end,
 })
-FarmTab:Slider({
-    Title = "Rebirth Delay",
-    Desc  = "Time to wait between purchase attempts.",
-    Step  = 0.1,
-    Value = { Min = 0.5, Max = 5, Default = 1 },
-    Callback = function(v) RebirthState.Delay = v end,
+FarmTab:CreateSlider({
+    name = "Rebirth Delay",
+    description = "Time to wait between purchase attempts.",
+    range = {0.5, 5},
+    increment = 0.1,
+    value = 1,
+    callback = function(v) RebirthState.Delay = v end,
 })
 
-FarmTab:Section({ Title = "Auto Double Jump", Opened = false })
-FarmTab:Toggle({
-    Title = "Auto Buy Double Jumps",
-    Desc  = "Buys the next available double jump upgrade when affordable.",
-    Value = false,
-    Flag  = "autoJump",
-    Callback = function(v) JumpState.Running = v end,
+FarmTab:CreateSection({ name = "Auto Double Jump" })
+FarmTab:CreateToggle({
+    name = "Auto Buy Double Jumps",
+    description = "Buys the next double jump upgrade when affordable.",
+    value = false,
+    flag = "autoJump",
+    callback = function(v) JumpState.Running = v end,
 })
-FarmTab:Button({
-    Title = "Buy Once",
-    Desc  = "Triggers one purchase attempt right now.",
-    Icon  = "zap",
-    Callback = function()
+FarmTab:CreateButton({
+    name = "Buy Once",
+    description = "Triggers one purchase attempt right now.",
+    callback = function()
         if attemptBuyJump() then
-            Notify({ Title = "Double Jump", Content = "Purchase requested", Icon = "check", Duration = 2 })
+            window:Toast({ title = "Double Jump", subtitle = "Purchase sent" })
         else
-            Notify({ Title = "Double Jump", Content = "Not enough funds or blocked", Icon = "x", Duration = 2 })
+            window:Toast({ title = "Double Jump", subtitle = "Not enough coins or blocked" })
         end
     end,
 })
-FarmTab:Slider({
-    Title = "Jump Delay",
-    Desc  = "Time to wait between purchase attempts.",
-    Step  = 0.1,
-    Value = { Min = 0.5, Max = 5, Default = 1 },
-    Callback = function(v) JumpState.Delay = v end,
+FarmTab:CreateSlider({
+    name = "Jump Delay",
+    description = "Time to wait between purchase attempts.",
+    range = {0.5, 5},
+    increment = 0.1,
+    value = 1,
+    callback = function(v) JumpState.Delay = v end,
 })
 
-FarmTab:Section({ Title = "Auto Skill Tree", Opened = false })
-FarmTab:Toggle({
-    Title = "Auto Unlock Skills",
-    Desc  = "Unlocks any affordable skill tree node.",
-    Value = false,
-    Flag  = "autoSkillTree",
-    Callback = function(v) SkillState.Running = v end,
+FarmTab:CreateSection({ name = "Auto Skill Tree" })
+FarmTab:CreateToggle({
+    name = "Auto Unlock Skills",
+    description = "Buys any skill node you can afford, in order.",
+    value = false,
+    flag = "autoSkillTree",
+    callback = function(v) SkillState.Running = v end,
 })
-FarmTab:Slider({
-    Title = "Skill Delay",
-    Desc  = "Time to wait between skill upgrade checks.",
-    Step  = 0.1,
-    Value = { Min = 0.5, Max = 5, Default = 1 },
-    Callback = function(v) SkillState.Delay = v end,
-})
-
-FarmTab:Section({ Title = "Auto Quests", Opened = false })
-FarmTab:Toggle({
-    Title = "Auto Claim Quests",
-    Desc  = "Claims all completed and unclaimed quests.",
-    Value = false,
-    Flag  = "autoQuest",
-    Callback = function(v) QuestState.Running = v end,
-})
-FarmTab:Slider({
-    Title = "Claim Delay",
-    Desc  = "Time to wait between claim attempts.",
-    Step  = 0.1,
-    Value = { Min = 0.5, Max = 5, Default = 1 },
-    Callback = function(v) QuestState.Delay = v end,
+FarmTab:CreateSlider({
+    name = "Skill Delay",
+    description = "Time to wait between skill purchase loops.",
+    range = {0.5, 5},
+    increment = 0.1,
+    value = 1,
+    callback = function(v) SkillState.Delay = v end,
 })
 
-local FarmStatus = FarmTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            FarmStatus:SetDesc(string.format(
-                "Tap: %d | Rebirth: %d | Jump: %d | Skills: %d | Quests: %d",
-                TapState.Count, RebirthState.Count, JumpState.Count, SkillState.Count, QuestState.Count
-            ))
-        end)
-    end
-end)
+FarmTab:CreateSection({ name = "Auto Quests" })
+FarmTab:CreateToggle({
+    name = "Auto Claim Quests",
+    description = "Claims all completed quests.",
+    value = false,
+    flag = "autoQuest",
+    callback = function(v) QuestState.Running = v end,
+})
+FarmTab:CreateSlider({
+    name = "Claim Delay",
+    description = "Time to wait between claim checks.",
+    range = {0.5, 5},
+    increment = 0.1,
+    value = 1,
+    callback = function(v) QuestState.Delay = v end,
+})
 
-PetsTab:Section({ Title = "Auto Hatch", Opened = true })
+FarmTab:CreateText({
+    name = "Farm Status",
+    text = "Taps: 0 | Rebirths: 0 | Jumps: 0 | Skills: 0 | Quests: 0"
+})
+
+
+PetsTab:CreateSection({ name = "Auto Hatch" })
 local EggOptions = {}
 if EggConfig then
     for eggName in pairs(EggConfig) do table.insert(EggOptions, eggName) end
     table.sort(EggOptions)
-    HatchState.SelectedEgg = EggOptions[1]
 end
-PetsTab:Dropdown({
-    Title  = "Select Egg",
-    Desc   = "Choose the egg you want to hatch.",
-    Values = EggOptions,
-    Value  = EggOptions[1],
-    Callback = function(v) HatchState.SelectedEgg = v end,
+if #EggOptions == 0 then EggOptions = { "None" } end
+HatchState.SelectedEgg = EggOptions[1]
+PetsTab:CreateDropdown({
+    name = "Select Egg",
+    description = "Choose which egg to hatch.",
+    options = EggOptions,
+    value = EggOptions[1],
+    callback = function(selected) HatchState.SelectedEgg = selected[1] end,
 })
-PetsTab:Dropdown({
-    Title  = "Hatch Amount",
-    Desc   = "How many eggs to hatch at once. x8 requires a Gamepass.",
-    Values = { "1", "3", "8" },
-    Value  = "1",
-    Callback = function(v) HatchState.SelectedAmount = tonumber(v) or 1 end,
+PetsTab:CreateDropdown({
+    name = "Hatch Amount",
+    description = "How many eggs per hatch. x8 needs the Gamepass or a boost.",
+    options = { "1", "3", "8" },
+    value = "1",
+    callback = function(selected) HatchState.SelectedAmount = tonumber(selected[1]) or 1 end,
 })
-PetsTab:Toggle({
-    Title = "Auto Hatch",
-    Desc  = "Automatically hatches eggs.",
-    Value = false,
-    Flag  = "autoHatch",
-    Callback = function(v) HatchState.HatchRunning = v end,
+PetsTab:CreateToggle({
+    name = "Auto Hatch",
+    description = "Hatches the selected egg automatically. Crafting takes priority if enabled.",
+    value = false,
+    flag = "autoHatch",
+    callback = function(v) HatchState.HatchRunning = v end,
 })
-PetsTab:Slider({
-    Title = "Hatch Delay",
-    Desc  = "Time to wait between hatch attempts.",
-    Step  = 0.1,
-    Value = { Min = 0.1, Max = 2, Default = 0.5 },
-    Callback = function(v) HatchState.HatchDelay = v end,
+PetsTab:CreateSlider({
+    name = "Hatch Delay",
+    description = "Time to wait between hatch attempts.",
+    range = {0.1, 2},
+    increment = 0.1,
+    value = 0.5,
+    callback = function(v) HatchState.HatchDelay = v end,
 })
 
 local BoostList = {}
@@ -1491,104 +1543,94 @@ local GiftsList = { "New Years Gift", "Valentines Gift", "St. Patrick Gift", "Re
 local TreatsList = { "RegularTreat", "BagOfTreats", "ExoticShard", "ElectricShard", "SecretFruit", "DragonFruit", "GoldenApple", "RainbowStrawberry", "GoldenTreat" }
 local TotemsList = { "TotemOfLuck", "TotemOfRebirths", "TotemOfClicks", "TotemOfSecretLuck", "TotemOfHatchSpeed" }
 
-PetsTab:Section({ Title = "Auto Boosts", Opened = false })
-PetsTab:Dropdown({
-    Title  = "Select Boosts",
-    Desc   = "Choose which boosts to use.",
-    Values = BoostList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedBoosts = v end,
+PetsTab:CreateSection({ name = "Auto Boosts" })
+PetsTab:CreateDropdown({
+    name = "Select Boosts",
+    description = "Choose which boosts to use from your inventory.",
+    options = BoostList,
+    multiSelect = true,
+    callback = function(selected) ItemState.SelectedBoosts = selected end,
 })
-PetsTab:Toggle({
-    Title = "Use Boosts",
-    Desc  = "Uses selected boosts from your inventory.",
-    Value = false,
-    Flag  = "useBoosts",
-    Callback = function(v) ItemState.BoostRunning = v end,
-})
-
-PetsTab:Section({ Title = "Auto Gifts", Opened = false })
-PetsTab:Dropdown({
-    Title  = "Select Gifts",
-    Desc   = "Choose which gifts to open.",
-    Values = GiftsList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedGifts = v end,
-})
-PetsTab:Toggle({
-    Title = "Open Gifts",
-    Desc  = "Opens selected gift items.",
-    Value = false,
-    Flag  = "openGifts",
-    Callback = function(v) ItemState.GiftRunning = v end,
+PetsTab:CreateToggle({
+    name = "Use Boosts",
+    description = "Automatically uses the selected boosts.",
+    value = false,
+    flag = "useBoosts",
+    callback = function(v) ItemState.BoostRunning = v end,
 })
 
-PetsTab:Section({ Title = "Auto Treats", Opened = false })
-PetsTab:Dropdown({
-    Title  = "Select Treats",
-    Desc   = "Choose which treats to feed.",
-    Values = TreatsList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedTreats = v end,
+PetsTab:CreateSection({ name = "Auto Gifts" })
+PetsTab:CreateDropdown({
+    name = "Select Gifts",
+    description = "Choose which gifts to open.",
+    options = GiftsList,
+    multiSelect = true,
+    callback = function(selected) ItemState.SelectedGifts = selected end,
 })
-PetsTab:Toggle({
-    Title = "Feed Treats",
-    Desc  = "Feeds selected treats to your first pet.",
-    Value = false,
-    Flag  = "feedTreats",
-    Callback = function(v) ItemState.TreatRunning = v end,
-})
-
-PetsTab:Section({ Title = "Auto Totems", Opened = false })
-PetsTab:Dropdown({
-    Title  = "Select Totems",
-    Desc   = "Choose which totems to place.",
-    Values = TotemsList,
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(v) ItemState.SelectedTotems = v end,
-})
-PetsTab:Toggle({
-    Title = "Place Totems",
-    Desc  = "Places selected totems near you.",
-    Value = false,
-    Flag  = "placeTotems",
-    Callback = function(v) ItemState.TotemRunning = v end,
+PetsTab:CreateToggle({
+    name = "Open Gifts",
+    description = "Automatically opens the selected gifts.",
+    value = false,
+    flag = "openGifts",
+    callback = function(v) ItemState.GiftRunning = v end,
 })
 
-PetsTab:Section({ Title = "Item Timing", Opened = false })
-PetsTab:Slider({
-    Title = "Item Delay",
-    Desc  = "Time to wait between item actions.",
-    Step  = 0.1,
-    Value = { Min = 0.5, Max = 5, Default = 1 },
-    Callback = function(v) ItemState.Delay = v end,
+PetsTab:CreateSection({ name = "Auto Treats" })
+PetsTab:CreateDropdown({
+    name = "Select Treats",
+    description = "Choose which treats to feed.",
+    options = TreatsList,
+    multiSelect = true,
+    callback = function(selected) ItemState.SelectedTreats = selected end,
+})
+PetsTab:CreateToggle({
+    name = "Feed Treats",
+    description = "Feeds the selected treats to your first pet.",
+    value = false,
+    flag = "feedTreats",
+    callback = function(v) ItemState.TreatRunning = v end,
 })
 
-local PetsStatus = PetsTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            PetsStatus:SetDesc(string.format(
-                "Hatched: %d | Items used: %d | %s",
-                HatchState.Hatched, ItemState.Used, HatchState.Status
-            ))
-        end)
-    end
-end)
+PetsTab:CreateSection({ name = "Auto Totems" })
+PetsTab:CreateDropdown({
+    name = "Select Totems",
+    description = "Choose which totems to place near you.",
+    options = TotemsList,
+    multiSelect = true,
+    callback = function(selected) ItemState.SelectedTotems = selected end,
+})
+PetsTab:CreateToggle({
+    name = "Place Totems",
+    description = "Automatically places the selected totems.",
+    value = false,
+    flag = "placeTotems",
+    callback = function(v) ItemState.TotemRunning = v end,
+})
 
-ChestsTab:Section({ Title = "Auto Tap Chest", Opened = true })
+PetsTab:CreateSection({ name = "Item Timing" })
+PetsTab:CreateSlider({
+    name = "Item Delay",
+    description = "Time to wait between item uses.",
+    range = {0.5, 5},
+    increment = 0.1,
+    value = 1,
+    callback = function(v) ItemState.Delay = v end,
+})
+
+PetsTab:CreateText({
+    name = "Pets Status",
+    text = "Hatched: 0 | Items used: 0"
+})
+
+
+ChestsTab:CreateSection({ name = "Auto Tap Chest" })
 local TapChestCollectToggle, TapChestOpenToggle
-TapChestCollectToggle = ChestsTab:Toggle({
-    Title = "Auto Collect Tap Chest",
-    Desc  = "Runs the game's own chest opening sequence.",
-    Value = false,
-    Flag  = "autoCollectTapChest",
-    Callback = function(v)
+TapChestCollectToggle = ChestsTab:CreateToggle({
+    name = "Auto Collect Tap Chest",
+    description = "Claims ready Tap Chests through the game's own sequence.",
+    value = false,
+    flag = "autoCollectTapChest",
+    callback = function(v)
         TapChestState.CollectRunning = v
         if v and TapChestState.OpenRunning then
             TapChestState.OpenRunning = false
@@ -1596,12 +1638,12 @@ TapChestCollectToggle = ChestsTab:Toggle({
         end
     end,
 })
-TapChestOpenToggle = ChestsTab:Toggle({
-    Title = "Auto Open Tap Chest",
-    Desc  = "Runs the full chest opening animation before claiming.",
-    Value = false,
-    Flag  = "autoOpenTapChest",
-    Callback = function(v)
+TapChestOpenToggle = ChestsTab:CreateToggle({
+    name = "Auto Open Tap Chest",
+    description = "Runs the full opening animation before claiming.",
+    value = false,
+    flag = "autoOpenTapChest",
+    callback = function(v)
         TapChestState.OpenRunning = v
         if v and TapChestState.CollectRunning then
             TapChestState.CollectRunning = false
@@ -1609,75 +1651,68 @@ TapChestOpenToggle = ChestsTab:Toggle({
         end
     end,
 })
-ChestsTab:Slider({
-    Title = "Chest Delay",
-    Desc  = "Time to wait between chest actions.",
-    Step  = 0.1,
-    Value = { Min = 0.1, Max = 3, Default = 0.5 },
-    Callback = function(v) TapChestState.Delay = v end,
+ChestsTab:CreateSlider({
+    name = "Chest Delay",
+    description = "Time to wait between chest actions.",
+    range = {0.1, 3},
+    increment = 0.1,
+    value = 0.5,
+    callback = function(v) TapChestState.Delay = v end,
 })
 
-ChestsTab:Section({ Title = "Auto Clicker Chest", Opened = false })
-ChestsTab:Toggle({
-    Title = "Auto Teleport to Clicker Chest",
-    Desc  = "Finds the nearest ClickerChest and teleports to it.",
-    Value = false,
-    Flag  = "autoClickerChest",
-    Callback = function(v)
+ChestsTab:CreateSection({ name = "Auto Clicker Chest" })
+ChestsTab:CreateToggle({
+    name = "Auto Teleport to Clicker Chest",
+    description = "Finds the nearest Clicker Chest and teleports to it.",
+    value = false,
+    flag = "autoClickerChest",
+    callback = function(v)
         ClickerState.Running = v
         if v then ClickerState.Current = getClickerChest() end
     end,
 })
-ChestsTab:Slider({
-    Title = "Check Delay",
-    Desc  = "Time to wait between scans for a new chest.",
-    Step  = 0.1,
-    Value = { Min = 0.1, Max = 3, Default = 0.5 },
-    Callback = function(v) ClickerState.Delay = v end,
+ChestsTab:CreateSlider({
+    name = "Check Delay",
+    description = "Time to wait between scans for a new chest.",
+    range = {0.1, 3},
+    increment = 0.1,
+    value = 0.5,
+    callback = function(v) ClickerState.Delay = v end,
 })
 
-local ChestsStatus = ChestsTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            ChestsStatus:SetDesc(string.format(
-                "Collected: %d | Opened: %d | Failed: %d | %s",
-                TapChestState.Collected, TapChestState.Opened, TapChestState.Failed, TapChestState.Status
-            ))
-        end)
-    end
-end)
+ChestsTab:CreateText({
+    name = "Chests Status",
+    text = "Collected: 0 | Opened: 0 | Failed: 0"
+})
 
-GamesTab:Section({ Title = "Auto Dig Perfect", Opened = true })
-GamesTab:Toggle({
-    Title = "Auto Dig Perfect",
-    Desc  = "Teleports to the dig site and hits every round at the perfect zone.",
-    Value = false,
-    Flag  = "autoDigPerfect",
-    Callback = function(v)
+
+GamesTab:CreateSection({ name = "Auto Dig Perfect" })
+GamesTab:CreateToggle({
+    name = "Auto Dig Perfect",
+    description = "Teleports to the dig site and hits every round in the perfect zone.",
+    value = false,
+    flag = "autoDigPerfect",
+    callback = function(v)
         DigState.Running = v
         if not v then cancelDigSession() end
         if v then
             DigState.Status = "Starting..."
-            Notify({Title = "Auto Dig", Content = "Starting", Icon = "circle-check", Duration = 2})
+            window:Toast({ title = "Auto Dig", subtitle = "Starting" })
         end
     end,
 })
-GamesTab:Button({
-    Title = "Cancel Current Session",
-    Desc  = "Fires the cancel remote and clears local state.",
-    Icon  = "x",
-    Callback = function()
+GamesTab:CreateButton({
+    name = "Cancel Current Session",
+    description = "Fires the cancel remote and clears local state.",
+    callback = function()
         cancelDigSession()
         DigState.Status = "Session cancelled"
     end,
 })
-GamesTab:Button({
-    Title = "Reset Dig Stats",
-    Desc  = "Clears hit and game counters.",
-    Icon  = "refresh-cw",
-    Callback = function()
+GamesTab:CreateButton({
+    name = "Reset Dig Stats",
+    description = "Clears hit and game counters.",
+    callback = function()
         DigState.TotalHits = 0
         DigState.TotalGames = 0
         DigState.LastReward = nil
@@ -1685,22 +1720,20 @@ GamesTab:Button({
     end,
 })
 
-GamesTab:Section({ Title = "Auto Colosseum", Opened = false })
-ColosseumToggle = GamesTab:Toggle({
-    Title = "Auto Colosseum",
-    Desc  = "Teleports to the arena, activates Pet Defense, and auto-attacks.",
-    Value = false,
-    Flag  = "autoColosseum",
-    Callback = function(v)
+GamesTab:CreateSection({ name = "Auto Colosseum" })
+ColosseumToggle = GamesTab:CreateToggle({
+    name = "Auto Colosseum",
+    description = "Teleports to the arena and plays Pet Defense automatically.",
+    value = false,
+    flag = "autoColosseum",
+    callback = function(v)
         if v then
             local ok, err = colosseumStart()
             if not ok then
                 pcall(function() ColosseumToggle:Set(false) end)
-                Notify({
-                    Title = "Colosseum",
-                    Content = "Cannot start: " .. tostring(err or "unknown"),
-                    Icon = "x",
-                    Duration = 5,
+                window:Notify({
+                    title = "Colosseum Failed",
+                    content = "Cannot start: " .. tostring(err or "unknown"),
                 })
             end
         else
@@ -1708,40 +1741,34 @@ ColosseumToggle = GamesTab:Toggle({
         end
     end,
 })
-GamesTab:Slider({
-    Title = "Attack Interval",
-    Desc  = "Time between attacks on the same opponent.",
-    Step  = 0.01,
-    Value = { Min = 0.05, Max = 1, Default = 0.15 },
-    Callback = function(v) ColosseumState.AttackInterval = v end,
+GamesTab:CreateSlider({
+    name = "Attack Interval",
+    description = "Time between attacks on the same opponent.",
+    range = {0.05, 1},
+    increment = 0.01,
+    value = 0.15,
+    callback = function(v) ColosseumState.AttackInterval = v end,
 })
-GamesTab:Slider({
-    Title = "Critical Interval",
-    Desc  = "Time between critical hit attempts.",
-    Step  = 0.5,
-    Value = { Min = 3, Max = 15, Default = 7 },
-    Callback = function(v) ColosseumState.CriticalInterval = v end,
+GamesTab:CreateSlider({
+    name = "Critical Interval",
+    description = "Time between critical hit attempts.",
+    range = {3, 15},
+    increment = 0.5,
+    value = 7,
+    callback = function(v) ColosseumState.CriticalInterval = v end,
 })
-GamesTab:Paragraph({
-    Title = "Note",
-    Desc  = "Opponent models may not appear since auto-start skips the client intro. Combat and rewards work normally.",
+GamesTab:CreateText({
+    name = "Note",
+    text = "Opponent models may not appear since auto-start skips the intro. Combat and rewards work normally.",
 })
 
-local GamesStatus = GamesTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            GamesStatus:SetDesc(string.format(
-                "Dig: %s (%d hits, %d games) | Colosseum: %d waves, %s",
-                DigState.Status, DigState.TotalHits, DigState.TotalGames,
-                ColosseumState.Waves, ColosseumState.Status
-            ))
-        end)
-    end
-end)
+GamesTab:CreateText({
+    name = "Games Status",
+    text = "Dig: Idle (0 hits) | Colosseum: 0 waves, Idle"
+})
 
-CraftTab:Section({ Title = "Auto Craft Golden Pets", Opened = true })
+
+CraftTab:CreateSection({ name = "Auto Craft Golden Pets" })
 
 local CraftPetsOptions = {}
 if MachineConfig and MachineConfig.Golden and MachineConfig.Golden.Chances then
@@ -1749,13 +1776,14 @@ if MachineConfig and MachineConfig.Golden and MachineConfig.Golden.Chances then
         table.insert(CraftPetsOptions, string.format("%d Pets (%d%%)", i, chance))
     end
 end
-CraftTab:Dropdown({
-    Title  = "Pets to Use",
-    Desc   = "Number of pets consumed per Golden craft.",
-    Values = CraftPetsOptions,
-    Value  = CraftPetsOptions[6],
-    Callback = function(v)
-        local n = tonumber(string.match(v, "%d+"))
+if #CraftPetsOptions == 0 then CraftPetsOptions = { "6 Pets" } end
+CraftTab:CreateDropdown({
+    name = "Pets to Use",
+    description = "Number of pets consumed per Golden craft.",
+    options = CraftPetsOptions,
+    value = CraftPetsOptions[#CraftPetsOptions >= 6 and 6 or #CraftPetsOptions],
+    callback = function(selected)
+        local n = tonumber(string.match(selected[1], "%d+"))
         if n then CraftState.PetsToUse = n end
     end,
 })
@@ -1776,38 +1804,30 @@ local function getMutationOptions()
     return list
 end
 
-local CraftMutationDropdown
-CraftMutationDropdown = CraftTab:Dropdown({
-    Title  = "Filter Mutation",
-    Desc   = "Only craft pets that have this mutation.",
-    Values = getMutationOptions(),
-    Value  = "None",
-    Callback = function(v) CraftState.SelectedMutation = v end,
+CraftTab:CreateDropdown({
+    name = "Filter Mutation",
+    description = "Only craft pets that have this mutation.",
+    options = getMutationOptions(),
+    value = "None",
+    callback = function(selected) CraftState.SelectedMutation = selected[1] end,
 })
-CraftTab:Button({
-    Title = "Refresh Mutations",
-    Desc  = "Updates the mutation list based on your current pets.",
-    Icon  = "refresh-cw",
-    Callback = function()
+CraftTab:CreateButton({
+    name = "Refresh Mutations",
+    description = "Updates the mutation list from your current pets.",
+    callback = function()
         local opts = getMutationOptions()
-        if CraftMutationDropdown then
-            pcall(function() CraftMutationDropdown:Refresh(opts) end)
-            if not table.find(opts, CraftState.SelectedMutation) then
-                CraftState.SelectedMutation = "None"
-                pcall(function() CraftMutationDropdown:Select("None") end)
-            end
-        end
+        window:Toast({ title = "Mutation List Updated", subtitle = "Check dropdown options" })
     end,
 })
-CraftTab:Toggle({
-    Title = "Auto Craft Golden Pets",
-    Desc  = "Teleports to the Golden Machine and crafts matching pets.",
-    Value = false,
-    Flag  = "autoCraftGolden",
-    Callback = function(v) CraftState.GoldenRunning = v end,
+CraftTab:CreateToggle({
+    name = "Auto Craft Golden Pets",
+    description = "Teleports to the Golden Machine and crafts matching pets.",
+    value = false,
+    flag = "autoCraftGolden",
+    callback = function(v) CraftState.GoldenRunning = v end,
 })
 
-CraftTab:Section({ Title = "Auto Honey Pot", Opened = false })
+CraftTab:CreateSection({ name = "Auto Honey Pot" })
 
 local HoneyPotRecipeOptions = { "Auto" }
 local HoneyPotRecipeKeyByLabel = {}
@@ -1824,12 +1844,13 @@ if HoneyPotConfig then
     end
 end
 
-CraftTab:Dropdown({
-    Title  = "Honey Pot Recipe",
-    Desc   = "Auto picks the highest-rarity craftable recipe.",
-    Values = HoneyPotRecipeOptions,
-    Value  = "Auto",
-    Callback = function(v)
+CraftTab:CreateDropdown({
+    name = "Honey Pot Recipe",
+    description = "Auto picks the highest-rarity craftable recipe.",
+    options = HoneyPotRecipeOptions,
+    value = "Auto",
+    callback = function(selected)
+        local v = selected[1]
         if v == "Auto" then
             HoneyPotState.SelectedRecipe = "Auto"
         else
@@ -1837,58 +1858,51 @@ CraftTab:Dropdown({
         end
     end,
 })
-CraftTab:Toggle({
-    Title = "Auto Claim",
-    Desc  = "Claims any ready slot on the Honey Pot machine.",
-    Value = false,
-    Flag  = "autoClaimHoneyPot",
-    Callback = function(v) HoneyPotState.ClaimRunning = v end,
+CraftTab:CreateToggle({
+    name = "Auto Claim",
+    description = "Claims any ready slot on the Honey Pot machine.",
+    value = false,
+    flag = "autoClaimHoneyPot",
+    callback = function(v) HoneyPotState.ClaimRunning = v end,
 })
-CraftTab:Toggle({
-    Title = "Auto Craft",
-    Desc  = "Crafts into empty Honey Pot slots when ingredients are available.",
-    Value = false,
-    Flag  = "autoCraftHoneyPot",
-    Callback = function(v) HoneyPotState.CraftRunning = v end,
+CraftTab:CreateToggle({
+    name = "Auto Craft",
+    description = "Crafts into empty Honey Pot slots when ingredients are available.",
+    value = false,
+    flag = "autoCraftHoneyPot",
+    callback = function(v) HoneyPotState.CraftRunning = v end,
 })
-CraftTab:Toggle({
-    Title = "Auto Teleport to Machine",
-    Desc  = "Teleports to the Honey Pot machine when out of range.",
-    Value = true,
-    Flag  = "autoTeleportHoneyPot",
-    Callback = function(v) HoneyPotState.AutoTeleport = v end,
+CraftTab:CreateToggle({
+    name = "Auto Teleport to Machine",
+    description = "Teleports to the Honey Pot machine when out of range.",
+    value = true,
+    flag = "autoTeleportHoneyPot",
+    callback = function(v) HoneyPotState.AutoTeleport = v end,
 })
-CraftTab:Slider({
-    Title = "Craft Amount",
-    Desc  = "Max amount per Honey Pot craft request.",
-    Step  = 1,
-    Value = { Min = 1, Max = 50, Default = 1 },
-    Callback = function(v) HoneyPotState.CraftAmount = v end,
+CraftTab:CreateSlider({
+    name = "Craft Amount",
+    description = "Max amount per Honey Pot craft request.",
+    range = {1, 50},
+    increment = 1,
+    value = 1,
+    callback = function(v) HoneyPotState.CraftAmount = v end,
 })
-CraftTab:Slider({
-    Title = "Action Delay",
-    Desc  = "Time between Honey Pot claim and craft actions.",
-    Step  = 0.1,
-    Value = { Min = 0.3, Max = 3, Default = 0.5 },
-    Callback = function(v) HoneyPotState.Delay = v end,
+CraftTab:CreateSlider({
+    name = "Action Delay",
+    description = "Time between Honey Pot claim and craft actions.",
+    range = {0.3, 3},
+    increment = 0.1,
+    value = 0.5,
+    callback = function(v) HoneyPotState.Delay = v end,
 })
 
-local CraftStatus = CraftTab:Paragraph({ Title = "Status", Desc = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        pcall(function()
-            CraftStatus:SetDesc(string.format(
-                "Golden: %d | Honey Pot: %d claimed, %d crafted | %s",
-                CraftState.GoldenCrafted, HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Status
-            ))
-        end)
-    end
-end)
+CraftTab:CreateText({
+    name = "Craft Status",
+    text = "Golden: 0 crafted | Honey Pot: 0 claimed, 0 crafted"
+})
 
-Notify({
-    Title = "Tap Simulator REBORN",
-    Content = "Loaded. Toggle anything to start.",
-    Icon = "check",
-    Duration = 5,
+window:Notify({
+    title = "Tap Simulator REBORN",
+    content = "Loaded. Toggle anything to start.",
+    duration = 5,
 })
