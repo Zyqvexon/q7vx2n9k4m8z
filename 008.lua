@@ -5,8 +5,18 @@ local Window
 
 local okRayfield, loadedRayfield = pcall(function()
     local source = game:HttpGet("https://sirius.menu/gen2")
-    local loader = loadstring(source)
-    assert(type(loader) == "function", "Rayfield Gen2 loader could not be compiled")
+
+    -- Try to route Rayfield Gen2's GUI container to LocalPlayer.PlayerGui.
+    -- The source is patched only if its known guiContainer initializer is found.
+    local patchedSource, replacements = source:gsub(
+        "af%.guiContainer=%(function%(%):Instance.-end%)%(%)",
+        "af.guiContainer=(function():Instance local ag=af.localPlayer if ag then local ah=ag:FindFirstChildOfClass('PlayerGui') or ag:WaitForChild('PlayerGui') if ah then return ah end end return af.coreGui end)()",
+        1
+    )
+    assert(replacements == 1, "Could not apply PlayerGui patch to this Rayfield Gen2 build; no changes were executed")
+
+    local loader, compileError = loadstring(patchedSource)
+    assert(type(loader) == "function", "Patched Rayfield Gen2 could not be compiled: " .. tostring(compileError))
     return loader()
 end)
 
@@ -37,7 +47,7 @@ end)
 
 if not okWindow or not createdWindow then
     local message = tostring(createdWindow)
-    warn("[Tap Simulator REBORN] Rayfield Gen2 could not create its window: " .. message)
+    warn("[Tap Simulator REBORN] Rayfield Gen2 (PlayerGui attempt) could not create its window: " .. message)
     if string.find(message, "capability Plugin", 1, true) then
         warn("[Tap Simulator REBORN] Roblox denied an operation required by the UI in this execution context. The script cannot grant that capability; use a supported client-side context.")
     end
