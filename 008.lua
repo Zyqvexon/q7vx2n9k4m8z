@@ -68,13 +68,6 @@ local window = Rayfield:CreateWindow({
     }
 })
 pcall(function() window:ChangeTheme({LiveAnimation = false}) end)
-local hatchStatusTag
-pcall(function()
-    hatchStatusTag = window:CreateTag({
-        text = "HATCH: IDLE",
-        color = Color3.fromRGB(150, 155, 165)
-    })
-end)
 runtime:AddCleanup(function()
     if not window.unloaded then window:Unload() end
 end)
@@ -87,7 +80,9 @@ local utils = {
     controls = {},
     status = {},
     activityTimes = {},
-    stats = {},
+    statusDisplays = {},
+    renderedStatus = {},
+    statusDetail = {},
     runCounts = {},
     pendingStats = {},
     actionBusy = {},
@@ -192,9 +187,9 @@ end
 utils.activityConsole = tabs.main:CreateConsole({
     name = "Live Activity",
     text = "Waiting for activity...",
-    height = 138,
+    height = 104,
     follow = true,
-    maxLines = 24
+    maxLines = 12
 })
 
 local activityNames = {
@@ -233,19 +228,55 @@ local activityNames = {
     SessionUnload = "Hub Controls"
 }
 
+function utils.refreshStatusDisplay(key)
+    local handle = utils.statusDisplays[key]
+    if not handle then return end
+
+    local state = tostring(utils.status[key] or "Off"):upper():gsub("[%c]", " ")
+    local detail = utils.statusDetail[key]
+    local count = utils.runCounts[key] or 0
+    local line = state
+    if detail and detail ~= "" then line = line .. " - " .. tostring(detail) end
+    line = line .. " | " .. (count == 1 and "1 run" or (tostring(count) .. " runs"))
+    if #line > 104 then line = line:sub(1, 101) .. "..." end
+    if utils.renderedStatus[key] == line then return end
+
+    utils.renderedStatus[key] = line
+    pcall(function() handle:Set(line) end)
+end
+
+function utils.createStatusRow(tab, text, key, initialStatus)
+    utils.status[key] = initialStatus or utils.status[key] or "Off"
+    utils.runCounts[key] = utils.runCounts[key] or 0
+
+    local row = tab:CreateGroup()
+    local controlColumn = row:CreateGroup({direction = "column"})
+    local statusColumn = row:CreateGroup({direction = "column"})
+    utils.statusDisplays[key] = statusColumn:CreateText({
+        name = "STATUS",
+        text = tostring(utils.status[key]):upper() .. " | " .. tostring(utils.runCounts[key]) .. " runs"
+    })
+    utils.refreshStatusDisplay(key)
+    return controlColumn
+end
+
+function utils.appendActivity(key, value)
+    if not runtime.Alive or not utils.activityConsole then return end
+    local now = os.clock()
+    local last = utils.activityTimes[key] or 0
+    if now - last < 1.1 then return end
+    utils.activityTimes[key] = now
+    pcall(function()
+        utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(activityNames[key] or key) .. ": " .. tostring(value))
+    end)
+end
+
 function utils.message(key, value)
     local status = tostring(value or "Idle")
     local previous = utils.status[key]
-    local now = os.clock()
     utils.status[key] = status
-    if not runtime.Alive or not utils.activityConsole then return end
-    local last = utils.activityTimes[key] or 0
-    if now - last < 1.0 then return end
-    if previous == status and now - last < 4 then return end
-    utils.activityTimes[key] = now
-    pcall(function()
-        utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(activityNames[key] or key) .. ": " .. status)
-    end)
+    utils.refreshStatusDisplay(key)
+    if previous ~= status then utils.appendActivity(key, status) end
 end
 
 function utils.isInventoryFullMessage(value)
@@ -264,49 +295,41 @@ function utils.setHatchStatus(value)
     local raw = tostring(value or "Idle")
     local lower = raw:lower()
     local label = "READY"
-    local color = Color3.fromRGB(90, 190, 125)
-    local details = raw
+    local detail
 
     if utils.isInventoryFullMessage(raw) then
         label = "INVENTORY FULL"
-        color = Color3.fromRGB(245, 150, 70)
-        details = "Inventory full - clear pet slots to resume hatching"
+        detail = "Clear pet slots to resume"
     elseif lower:find("not enough coins", 1, true) then
         label = "LOW COINS"
-        color = Color3.fromRGB(235, 190, 75)
+        detail = "Not enough coins"
     elseif lower:find("egg unavailable", 1, true) then
         label = "EGG UNAVAILABLE"
-        color = Color3.fromRGB(235, 165, 75)
+        detail = "Choose another egg"
     elseif lower:find("unlock ", 1, true) then
         label = "LOCKED"
-        color = Color3.fromRGB(235, 165, 75)
+        detail = raw
     elseif lower:find("opening ", 1, true) or lower:find("awaiting server result", 1, true) then
         label = "HATCHING"
-        color = Color3.fromRGB(90, 190, 125)
     elseif lower:find("hatched ", 1, true) then
         label = "HATCHED"
-        color = Color3.fromRGB(90, 190, 125)
     elseif lower:find("cooldown", 1, true) or lower:find("animation playing", 1, true)
         or lower:find("character busy", 1, true) or lower:find("waiting", 1, true) then
         label = "WAITING"
-        color = Color3.fromRGB(225, 185, 85)
     elseif lower == "off" or lower:find("stopped", 1, true) then
         label = "OFF"
-        color = Color3.fromRGB(150, 155, 165)
     elseif lower:find("failed", 1, true) or lower:find("rejected", 1, true)
         or lower:find("timeout", 1, true) then
         label = "ERROR"
-        color = Color3.fromRGB(225, 90, 90)
+        detail = raw
     end
 
     local changed = utils.hatch.Status ~= label
     utils.hatch.Status = label
-    if changed then
-        pcall(function()
-            hatchStatusTag:Set({text = "HATCH: " .. label, color = color})
-        end)
-        utils.message("Hatch", details)
-    end
+    utils.status["Hatch"] = label
+    utils.statusDetail["Hatch"] = detail
+    utils.refreshStatusDisplay("Hatch")
+    if changed then utils.appendActivity("Hatch", detail or label) end
 
     if label == "INVENTORY FULL" then
         if changed and not utils.hatch.NotifiedFull then
@@ -318,35 +341,19 @@ function utils.setHatchStatus(value)
     end
 end
 
-function utils.registerStat(tab, text, key)
-    if utils.stats[key] then return utils.stats[key] end
-    utils.runCounts[key] = 0
-    local handle = tab:CreateStat({
-        name = text .. " Runs",
-        value = 0,
-        suffix = " runs"
-    })
-    utils.stats[key] = handle
-    return handle
-end
-
-function utils.recordRun(key)
-    local count = (utils.runCounts[key] or 0) + 1
-    utils.runCounts[key] = count
-    utils.pendingStats[key] = count
-end
-
-function utils.label(tab, key)
-    utils.status[key] = "Off"
-end
-
 function utils.section(tab, text)
     tab:CreateSection({name = text})
 end
 
+function utils.recordRun(key)
+    utils.runCounts[key] = (utils.runCounts[key] or 0) + 1
+    utils.pendingStats[key] = true
+end
+
 function utils.job(tab, text, key, interval, callback, cleanup)
     utils.jobs[key] = {Enabled = false, Busy = false, Generation = 0, Callback = callback, Next = 0, Interval = interval, Cleanup = cleanup}
-    utils.controls[key .. "Switch"] = tab:CreateToggle({
+    local controlColumn = utils.createStatusRow(tab, text, key, "Off")
+    utils.controls[key .. "Switch"] = controlColumn:CreateToggle({
         name = text,
         value = false,
         flag = "Enabled." .. key,
@@ -355,30 +362,54 @@ function utils.job(tab, text, key, interval, callback, cleanup)
             job.Generation += 1
             job.Enabled, job.Next = enabled, 0
             if not enabled and cleanup then pcall(cleanup) end
-            utils.message(key, enabled and "Waiting" or "Off")
-            if key == "Hatch" then utils.setHatchStatus(enabled and "Waiting for egg" or "Off") end
+            if key == "Hatch" then
+                utils.setHatchStatus(enabled and "Waiting for egg" or "Off")
+            else
+                utils.message(key, enabled and "Waiting" or "Off")
+            end
         end
     })
-    utils.registerStat(tab, text, key)
 end
 
 function utils.action(tab, text, key, callback)
-    local button = tab:CreateButton({name = text, callback = function()
+    local controlColumn = utils.createStatusRow(tab, text, key, "Ready")
+    local button = controlColumn:CreateButton({name = text, callback = function()
         if not runtime.Alive or utils.actionBusy[key] then return end
         if utils.jobs[key] and utils.jobs[key].Busy then return end
         utils.actionBusy[key] = true
+        utils.message(key, "Running")
         runtime:Spawn(function()
             utils.recordRun(key)
             local success, result = pcall(callback)
             utils.actionBusy[key] = nil
             utils.identityReset()
             if not runtime.Alive then return end
-            utils.message(key, success and (result or "Requested") or result)
+            local status = success and (result or "Completed") or ("Error: " .. tostring(result))
+            utils.message(key, status)
             if not success then notify(text, result, 4) end
         end)
     end})
-    utils.registerStat(tab, text, key)
     return button
+end
+
+function utils.toggle(tab, text, key, flag, callback)
+    local controlColumn = utils.createStatusRow(tab, text, key, "Off")
+    utils.controls[key .. "Switch"] = controlColumn:CreateToggle({
+        name = text,
+        value = false,
+        flag = flag,
+        callback = function(enabled)
+            utils.recordRun(key)
+            utils.message(key, enabled and "Enabled" or "Disabled")
+            local ok, result = pcall(callback, enabled)
+            utils.identityReset()
+            if not ok then
+                utils.message(key, "Error: " .. tostring(result))
+                notify(text, result, 4)
+            end
+        end
+    })
+    return utils.controls[key .. "Switch"]
 end
 
 function utils.dropdown(tab, text, settings, key, values, flag, mapper)
@@ -1619,12 +1650,9 @@ end
 
 utils.section(tabs.main, "Tapping")
 utils.job(tabs.main, "Auto Tap", "Tap", utils.modules.gameConfig.ManualTapInterval, utils.tap)
-utils.controls.HideClicks = tabs.main:CreateToggle({name = "Hide Tap Effects", value = false, flag = "Visual.HideTaps", callback = function(enabled)
-    utils.recordRun("HideClicks")
-    utils.message("HideClicks", enabled and "Enabled" or "Disabled")
+utils.toggle(tabs.main, "Hide Tap Effects", "HideClicks", "Visual.HideTaps", function(enabled)
     utils.hideClicks(enabled)
-end})
-utils.registerStat(tabs.main, "Hide Tap Effects", "HideClicks")
+end)
 utils.section(tabs.main, "Rebirth")
 tabs.main.rebirthValues, tabs.main.rebirthMap = {"Max"}, {}
 function utils.refreshRebirths()
@@ -1651,10 +1679,8 @@ utils.job(tabs.main, "Auto Unlock Islands", "Islands", 5, utils.islands)
 utils.job(tabs.main, "Auto Collect Rewards", "Rewards", 20, utils.rewards)
 utils.job(tabs.main, "Auto Dismiss Reward Popups", "RewardPopup", 0.3, utils.closeRewards)
 utils.job(tabs.main, "Auto Collect Chests", "Chests", 30, utils.chests)
-utils.label(tabs.main, "Rebirth")
 utils.section(tabs.main, "Optimization")
 utils.action(tabs.main, "Optimize Visuals", "Performance", utils.antiLag)
-utils.label(tabs.main, "Performance")
 utils.section(tabs.hatching, "Egg Hatching")
 utils.eggNames, utils.eggMap = {}, {}
 for _, egg in ipairs(utils.sortedEggs()) do
@@ -1678,13 +1704,9 @@ tabs.hatching:CreateDropdown({name = "Hatch Quantity", options = {"1x", "3x", "8
 })
 utils.settings.farm.HatchCount = 8
 utils.job(tabs.hatching, "Auto Hatch", "Hatch", 0.2, utils.hatchEgg)
-tabs.hatching:CreateToggle({name = "Skip Hatch Animations", value = false, flag = "Visual.HideHatch", callback = function(enabled)
-    utils.recordRun("HideHatch")
-    utils.message("HideHatch", enabled and "Enabled" or "Disabled")
+utils.toggle(tabs.hatching, "Skip Hatch Animations", "HideHatch", "Visual.HideHatch", function(enabled)
     utils.hideHatch(enabled)
-end})
-utils.registerStat(tabs.hatching, "Skip Hatch Animations", "HideHatch")
-utils.label(tabs.hatching, "Hatch")
+end)
 utils.section(tabs.hatching, "Auto-Delete Rules")
 local eggDeleteValues, eggDeleteSelected = utils.refreshEggDelete()
 tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Pets to Auto-Delete", options = eggDeleteValues, value = eggDeleteSelected, multiSelect = true,
@@ -1722,7 +1744,6 @@ tabs.pets.deleteNames = tabs.pets:CreateDropdown({name = "Pets to Delete", optio
     end
 })
 utils.job(tabs.pets, "Auto-Delete Pets", "Cleanup", 15, utils.sellPets)
-utils.label(tabs.pets, "Cleanup")
 tabs.crafting.petDropdowns = {}
 function utils.petNames(tier)
     local names = {}
@@ -1750,7 +1771,6 @@ for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Go
     end
     tabs.crafting.petDropdowns[tier] = utils.multi(tabs.crafting, "Pets for " .. title, utils.settings.pets, title .. "Pets", utils.petNames(tier), "Craft." .. title .. "Pets")
     utils.job(tabs.crafting, "Auto Craft " .. title, machine, 8, function() return utils.craft(machine) end)
-    utils.label(tabs.crafting, machine)
 end
 utils.job(tabs.crafting, "Auto Collect Stars", "Stars", 5, utils.collectStars)
 utils.section(tabs.enchanting, "Pet Enchanting")
@@ -1804,7 +1824,6 @@ end
 tabs.enchanting.petDropdown = tabs.enchanting:CreateDropdown({name = "Pets to Enchant", options = utils.enchantPets(), value = {"Equipped Pets"}, multiSelect = true, flag = "Enchant.Pets",
     callback = utils.selectEnchantPets})
 utils.job(tabs.enchanting, "Auto Enchant Pets", "Enchant", 2, utils.enchant)
-utils.label(tabs.enchanting, "Enchant")
 utils.section(tabs.teleport, "Island Travel")
 utils.settings.destination = {Island = "Spawn", OnJoin = false}
 utils.islandNames = {"Spawn"}
@@ -1816,14 +1835,10 @@ function utils.teleport()
     return utils.settings.destination.Island
 end
 utils.action(tabs.teleport, "Travel to Island", "Travel", utils.teleport)
-tabs.teleport:CreateToggle({name = "Travel on Join", value = false, flag = "Travel.OnJoin", callback = function(enabled)
-    utils.recordRun("TravelOnJoin")
-    utils.message("TravelOnJoin", enabled and "Enabled" or "Disabled")
+utils.toggle(tabs.teleport, "Travel on Join", "TravelOnJoin", "Travel.OnJoin", function(enabled)
     utils.settings.destination.OnJoin = enabled
     if enabled then runtime:Spawn(function() task.wait(1); if runtime.Alive and utils.settings.destination.OnJoin then pcall(utils.teleport) end end) end
-end})
-utils.registerStat(tabs.teleport, "Travel on Join", "TravelOnJoin")
-utils.label(tabs.teleport, "Travel")
+end)
 utils.section(tabs.misc, "Mini-Games")
 utils.job(tabs.misc, "Auto Play Colosseum", "Arena", 20, utils.colosseum, function()
     if utils.arena.Active then pcall(utils.remote, "Colosseum", "EndWaveDefense") end
@@ -1831,9 +1846,6 @@ utils.job(tabs.misc, "Auto Play Colosseum", "Arena", 20, utils.colosseum, functi
 end)
 utils.job(tabs.misc, "Auto Play Memory Match", "Memory", 20, utils.memoryGame)
 utils.job(tabs.misc, "Auto Dig", "Dig", 20, utils.digGame)
-utils.label(tabs.misc, "Arena")
-utils.label(tabs.misc, "Memory")
-utils.label(tabs.misc, "Dig")
 utils.section(tabs.misc, "Potions")
 utils.multi(tabs.misc, "Potion Types", utils.settings.boosts, "Types", {"Coins", "Gems", "Luck", "OctoHatch", "GoldenHatch", "EnchantAnimSpeed"}, "Boosts.Types")
 utils.job(tabs.misc, "Auto Use Boost Potions", "Boosts", 15, utils.potions)
@@ -1920,10 +1932,13 @@ runtime:Spawn(function()
                     job.Next = os.clock() + math.max(0.1, job.Interval)
                     if key == "Hatch" then
                         job.Next = math.max(job.Next, utils.hatch.NextAt or 0)
-                        utils.setHatchStatus(success and (result or "Active") or ("Hatch failed: " .. tostring(result)))
-                    end
-                    if job.Enabled and key ~= "Hatch" then
-                        utils.message(key, success and (result or "Active") or result)
+                        if job.Enabled then
+                            utils.setHatchStatus(success and (result or "Active") or ("Hatch failed: " .. tostring(result)))
+                        else
+                            utils.setHatchStatus("Off")
+                        end
+                    elseif job.Enabled then
+                        utils.message(key, success and (result or "Active") or ("Error: " .. tostring(result)))
                     end
                 end)
             end
@@ -1933,12 +1948,9 @@ runtime:Spawn(function()
 end)
 runtime:Spawn(function()
     while runtime.Alive do
-        for key, count in pairs(utils.pendingStats) do
+        for key in pairs(utils.pendingStats) do
             utils.pendingStats[key] = nil
-            local handle = utils.stats[key]
-            if handle then
-                pcall(function() handle:Set(count) end)
-            end
+            utils.refreshStatusDisplay(key)
         end
         task.wait(5)
     end
