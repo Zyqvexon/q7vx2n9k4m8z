@@ -1,2078 +1,1783 @@
-task.wait(2)
+assert(game.PlaceId == 72858262610964, "Open Tap Simulator REBORN before running Silence")
 
-local source = game:HttpGet("https://sirius.menu/gen2")
-local patchedSource = source:gsub(
-    "af%.guiContainer=%(function%(%):Instance.-end%)%(%)",
-    "af.guiContainer=(function():Instance local ag=af.localPlayer if ag then local ah=ag:FindFirstChildOfClass('PlayerGui') or ag:WaitForChild('PlayerGui') if ah then return ah end end return af.coreGui end)()",
-    1
-)
+local services = {
+    Players = game:GetService("Players"),
+    ReplicatedStorage = game:GetService("ReplicatedStorage"),
+    Workspace = workspace,
+    RunService = game:GetService("RunService"),
+    UserInputService = game:GetService("UserInputService"),
+    VirtualUser = game:GetService("VirtualUser"),
+    HttpService = game:GetService("HttpService"),
+    CollectionService = game:GetService("CollectionService"),
+    Lighting = game:GetService("Lighting")
+}
 
-local Rayfield = loadstring(patchedSource)()
+if _G.SilenceTapRebornRuntime then _G.SilenceTapRebornRuntime:Destroy() end
+local runtime = {Alive = true, Threads = {}, Connections = {}, Cleanups = {}}
+_G.SilenceTapRebornRuntime = runtime
 
-local Window = Rayfield:CreateWindow({
-    name = "[🎃] Tap Simulator REBORN",
-    subtitle = "by Ovei",
-    theme = "cobalt",
-    sidebarLayout = false,
+function runtime:Spawn(callback)
+    if not self.Alive then return end
+    local thread
+    thread = coroutine.create(function()
+        local success, result = pcall(callback)
+        self.Threads[thread] = nil
+        if not success then warn("[Silence Reborn] " .. tostring(result)) end
+    end)
+    self.Threads[thread] = true
+    task.spawn(thread)
+    return thread
+end
+
+function runtime:Connect(signal, callback)
+    local connection = signal:Connect(function(...) if self.Alive then callback(...) end end)
+    table.insert(self.Connections, connection)
+    return connection
+end
+
+function runtime:AddCleanup(callback)
+    table.insert(self.Cleanups, callback)
+end
+
+function runtime:Destroy()
+    if not self.Alive then return end
+    self.Alive = false
+    for _, connection in ipairs(self.Connections) do pcall(function() connection:Disconnect() end) end
+    for index = #self.Cleanups, 1, -1 do pcall(self.Cleanups[index]) end
+    for thread in pairs(self.Threads) do if thread ~= coroutine.running() then pcall(task.cancel, thread) end end
+    table.clear(self.Connections)
+    table.clear(self.Threads)
+    if _G.SilenceTapRebornRuntime == self then _G.SilenceTapRebornRuntime = nil end
+end
+
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+local window = Rayfield:CreateWindow({
+    name = "Silence | Tap Simulator REBORN",
+    subtitle = "Automation  •  Pets  •  Progression",
+    theme = "ember",
+    sidebarLayout = true,
+    profile = "Tap Simulator REBORN",
+    showName = "Silence",
+    showIconOnly = false,
     configuration = {
         autoSave = true,
         autoLoad = true,
-        fileName = "TapSimulatorReborn",
-        customFolder = "TapSimulatorReborn",
-    },
+        fileName = "SilenceTapSimulatorReborn",
+        customFolder = "SilenceTapSimulatorReborn_" .. tostring(services.Players.LocalPlayer.UserId)
+    }
 })
-
-local UserInputService = game:GetService("UserInputService")
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed or UserInputService:GetFocusedTextBox() then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then
-        Window:ToggleHide()
-    end
+window:CreateTag({text = "GEN2", color = Color3.fromRGB(190, 75, 65), order = 1})
+runtime:AddCleanup(function()
+    if not window.unloaded then window:Unload() end
 end)
 
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CollectionService = game:GetService("CollectionService")
-local LocalPlayer = Players.LocalPlayer
-local RS = ReplicatedStorage
+local utils = {
+    player = services.Players.LocalPlayer,
+    identity = type(getthreadidentity) == "function" and getthreadidentity() or 8,
+    modules = {},
+    jobs = {},
+    controls = {},
+    status = {},
+    next = {},
+    travel = {Owner = nil, Origin = nil},
+    hatch = {Sequence = 0, Pending = {}, Count = 0, Errors = 0, NextAt = 0},
+    arena = {Active = false, Opponents = {}, Wave = 0},
+    memory = {Id = nil, Known = {}},
+    originals = {},
+    clickVisuals = {Enabled = false, Hooks = {}, Saved = {}},
+    hatchVisuals = {Enabled = false, Hooks = {}},
+    performance = {Enabled = false, Saved = setmetatable({}, {__mode = "k"})},
+    settings = {
+        farm = {Rebirth = "Maximum", Egg = "Basic", HatchCount = 3, Reserve = 0},
+        pets = {Team = "Clicks", Names = {}, Rarities = {}, Tiers = {}, CraftMode = "Ready", GoldenCount = 6, DiamondCount = 5, RainbowCount = 5, GoldenPets = {["All Pets"] = true}, DiamondPets = {["All Pets"] = true}, RainbowPets = {["All Pets"] = true}},
+        enchant = {Traits = {}, Pets = {["Equipped Pets"] = true}, PetIds = {}, UseEquipped = true, Reserve = 25},
+        boosts = {Types = {Luck = true}, Brew = "Luck Potion I", Bundle = "1", Reserve = 0, Shrine = "Luck", Relic = "Automatic"},
+        character = {Speed = 24, Jump = 50}
+    }
+}
+window:CreateSection({name = "Automation"})
+local tabs = {}
+tabs.main = window:CreateTab({name = "Main"})
+tabs.hatching = window:CreateTab({name = "Hatching"})
 
-local DataController = require(RS.Controllers.Core.DataController)
-local CommModule = require(RS.Packages.Comm)
+window:CreateSection({name = "Pets"})
+tabs.pets = window:CreateTab({name = "Pets"})
+tabs.crafting = window:CreateTab({name = "Pet Crafting"})
+tabs.enchanting = window:CreateTab({name = "Enchanting"})
 
-local RemoteServices = RS:FindFirstChild("RemoteServices")
+window:CreateSection({name = "Tools"})
+tabs.teleport = window:CreateTab({name = "Teleports"})
+tabs.misc = window:CreateTab({name = "Misc"})
 
-local TapChestConfig = require(RS.Shared.Game.TapChestConfig)
-local TapChestController = require(RS.Controllers.Game.TapChestController)
-local DigConfig = require(RS.Shared.Minigames.DigConfig)
-local DigWorld = require(RS.Shared.Minigames.DigWorld)
-local HoneyPotConfig = require(RS.Shared.Items.HoneyPotConfig)
-local ColosseumAdapter = require(RS.Controllers.Minigames.ColosseumClientAdapter)
+window:CreateSection({name = "Settings"})
+tabs.config = window:CreateTab({name = "Configuration"})
 
-local EggConfig = require(RS.Shared.Pets.LaunchEggConfig)
-local EggPricing = require(RS.Shared.Pets.EggPricing)
-local EggIdleAnimation
-pcall(function()
-    EggIdleAnimation = require(RS.Modules.Client.Pets.EggIdleAnimation)
-end)
-local GamepassPerks = require(RS.Shared.Monetization.GamepassPerks)
-local BoostFormula = require(RS.Shared.Items.BoostFormula)
-local BoostConfig = require(RS.Shared.Items.BoostConfig)
-local MachineConfig = require(RS.Shared.Pets.MachineConfig)
-local PadProbe = require(RS.Shared.Core.PadProbe)
-local SkillTreeConfig = require(RS.Shared.Progression.SkillTreeConfig)
-local SkillTreeFormula = require(RS.Shared.Progression.SkillTreeFormula)
-local SkillTreeRequirements = require(RS.Shared.Progression.SkillTreeRequirements)
-local QuestConfig = require(RS.Shared.Quests.QuestConfig)
-local RebirthConfig = require(RS.Shared.Progression.RebirthConfig)
-local RebirthButtonConfig = require(RS.Shared.Progression.RebirthButtonConfig)
-local PhysicalUpgradeConfig = require(RS.Shared.Progression.PhysicalUpgradeConfig)
-local CurrencyConfig = require(RS.Shared.Core.CurrencyConfig)
-local GiftController = require(RS.Controllers.Items.GiftController)
-
-local EggService = CommModule.ClientComm.new(RemoteServices, false, "EggService"):BuildObject()
-local MachineService = CommModule.ClientComm.new(RemoteServices, false, "MachineService"):BuildObject()
-local SkillTreeService = CommModule.ClientComm.new(RemoteServices, false, "SkillTreeService"):BuildObject()
-local ItemService = CommModule.ClientComm.new(RemoteServices, false, "ItemService"):BuildObject()
-local TapChestService = CommModule.ClientComm.new(RemoteServices, false, "TapChestService"):BuildObject()
-local DigComm = CommModule.ClientComm.new(RemoteServices, false, "DigService"):BuildObject()
-local HoneyPotService = CommModule.ClientComm.new(RemoteServices, false, "HoneyPotService"):BuildObject()
-
-local function getRemote(serviceName, kind, name)
-    local svc = RemoteServices:FindFirstChild(serviceName)
-    if not svc then return nil end
-    local k = svc:FindFirstChild(kind)
-    if k then return k:FindFirstChild(name) end
-    return svc:FindFirstChild(name)
+local function selectedList(value)
+    if type(value) == "table" then return value end
+    if value ~= nil then return {value} end
+    return {}
 end
 
-local TapRemote = getRemote("TapService", "RE", "TapRequested")
-local RebirthRemote = getRemote("RebirthService", "RE", "RebirthRequested")
-local BoostRemote = getRemote("BoostService", "RF", "Use")
-local JumpRemote = getRemote("PhysicalUpgradeService", "RF", "Purchase")
-local ClaimQuestRF = getRemote("QuestService", "RF", "ClaimQuest")
-local ClaimQuestRE = getRemote("QuestService", "RE", "ClaimQuest")
+local function selectedOne(value)
+    if type(value) == "table" then return value[1] end
+    return value
+end
 
-local ColosseumNetwork = ColosseumAdapter and ColosseumAdapter.Network or nil
+local function containsValue(values, wanted)
+    return table.find(values, wanted) ~= nil
+end
 
-local function Notify(cfg)
-    Window:Notify({
-        title = cfg.title or cfg.name or "Tap Simulator REBORN",
-        content = cfg.content or "",
-        duration = cfg.duration,
+local function notify(title, content, duration)
+    window:Notify({title = title, content = tostring(content), duration = duration or 4})
+end
+
+
+function utils.identityReset()
+    if type(setthreadidentity) == "function" then setthreadidentity(utils.identity) end
+end
+
+function utils.load(name, path)
+    local instance = services.ReplicatedStorage
+    for part in path:gmatch("[^.]+") do instance = instance and instance:FindFirstChild(part) end
+    assert(instance and instance:IsA("ModuleScript"), "Missing module: " .. path)
+    local success, result = pcall(require, instance)
+    utils.identityReset()
+    assert(success, tostring(result))
+    utils.modules[name] = result
+    return result
+end
+
+utils.load("data", "Controllers.Core.DataController")
+utils.load("eggController", "Controllers.Pets.EggController")
+utils.load("menu", "Controllers.UI.MenuController")
+utils.load("format", "Modules.Client.Common.FormatNumber")
+utils.load("launchPets", "Shared.Pets.LaunchPetConfig")
+utils.load("eggIdle", "Modules.Client.Pets.EggIdleAnimation")
+utils.load("offlineHatch", "Shared.Pets.OfflineHatchConfig")
+utils.replica = utils.modules.data:GetReplica()
+utils.identityReset()
+for name, path in pairs({
+    rebirth = "Progression.RebirthConfig", buttons = "Progression.RebirthButtonConfig",
+    skills = "Progression.SkillTreeFormula", islands = "Progression.IslandConfig",
+    eggs = "Pets.LaunchEggConfig", machines = "Pets.MachineConfig", enchants = "Pets.EnchantConfig",
+    levels = "Pets.PetLevelConfig", rarity = "Pets.HatchRulesConfig", catalog = "Pets.OriginalPetCatalog",
+    boosts = "Items.BoostConfig", items = "Items.ItemCatalog", brew = "Items.PotionBrewConfig",
+    recipes = "Items.PotionCraftConfig", relics = "Progression.RelicConfig", stars = "Game.ShinyStarConfig",
+    dig = "Minigames.DigConfig", digWorld = "Minigames.DigWorld", memoryWorld = "Minigames.MemoryMatchWorld"
+}) do utils.load(name, "Shared." .. path) end
+
+function utils.save()
+    return utils.replica.Data
+end
+
+function utils.remote(group, name, ...)
+    local folder = services.ReplicatedStorage.RemoteServices:FindFirstChild(group .. "Service")
+    local remote = folder and ((folder:FindFirstChild("RF") and folder.RF:FindFirstChild(name)) or (folder:FindFirstChild("RE") and folder.RE:FindFirstChild(name)))
+    assert(remote, "Missing remote: " .. group .. "." .. name)
+    if remote:IsA("RemoteEvent") then remote:FireServer(...); return end
+    local result = remote:InvokeServer(...)
+    if type(result) == "table" then
+        assert(result.Success ~= false and not result.Error, tostring(result.Error or result.Reason or "Request rejected"))
+    end
+    return result
+end
+
+utils.activityConsole = tabs.main:CreateConsole({
+    name = "Live activity",
+    text = "Ready. Feature updates will appear here.",
+    height = 138,
+    follow = true,
+    maxLines = 100
+})
+
+function utils.message(key, value)
+    local status = tostring(value or "Idle")
+    utils.status[key] = status
+    if runtime.Alive and utils.activityConsole then
+        utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(key) .. ": " .. status)
+    end
+end
+
+function utils.label(tab, key)
+    utils.status[key] = "Off"
+end
+
+function utils.section(tab, text)
+    tab:CreateSection({name = text})
+end
+
+function utils.job(tab, text, key, interval, callback, cleanup)
+    utils.jobs[key] = {Enabled = false, Busy = false, Generation = 0, Callback = callback, Next = 0, Interval = interval, Cleanup = cleanup}
+    utils.controls[key .. "Switch"] = tab:CreateToggle({
+        name = text,
+        description = "Enable or pause this automation.",
+        value = false,
+        flag = "Enabled." .. key,
+        callback = function(enabled)
+            local job = utils.jobs[key]
+            job.Generation += 1
+            job.Enabled, job.Next = enabled, 0
+            if not enabled and cleanup then pcall(cleanup) end
+            utils.message(key, enabled and "Waiting" or "Off")
+        end
     })
 end
 
-local function getData()
-    return DataController:GetReplica().Data
-end
-
-local function getPartPos(obj)
-    if not obj then return nil end
-    if obj:IsA("BasePart") then return obj.Position end
-    local pp = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
-    if pp then return pp.Position end
-    local ok, pivot = pcall(function() return obj:GetPivot() end)
-    if ok and pivot then return pivot.Position end
-    return nil
-end
-
-local function TeleportTo(targetPos)
-    if not targetPos then return false end
-    for attempt = 1, 3 do
-        local char = LocalPlayer.Character
-        if not char then return false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return false end
-        local dist = (hrp.Position - targetPos).Magnitude
-        if dist <= 10 then return true end
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
-        hrp.Anchored = true
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        for i = 1, 5 do
-            hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 5, 0))
-            task.wait(0.05)
-        end
-        hrp.Anchored = false
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
-        task.wait(0.4)
-        hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp and (hrp.Position - targetPos).Magnitude <= 15 then return true end
-    end
-    return false
-end
-
--- EggController uses a strict proximity threshold when selecting an egg.
--- This helper verifies against that tighter range instead of TeleportTo's
--- generic 10/15-stud tolerance.
-local function getObjectBounds(obj)
-    if not obj then return nil, nil end
-    if obj:IsA("BasePart") then
-        return obj.CFrame, obj.Size
-    end
-    if obj:IsA("Model") then
-        local ok, cf, size = pcall(function()
-            local boundsCFrame, boundsSize = obj:GetBoundingBox()
-            return boundsCFrame, boundsSize
+function utils.action(tab, text, key, callback)
+    return tab:CreateButton({name = text, description = "Run this action once.", callback = function()
+        if utils.jobs[key] and utils.jobs[key].Busy then return end
+        runtime:Spawn(function()
+            local success, result = pcall(callback)
+            utils.identityReset()
+            utils.message(key, success and (result or "Requested") or result)
+            if not success then notify(text, result, 4) end
         end)
-        if ok and cf and size then return cf, size end
-    end
-    return nil, nil
+    end})
 end
 
-local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0 }
-
-task.spawn(function()
-    while true do
-        task.wait(TapState.Delay)
-        if not TapState.Running then continue end
-        TapState.Seq = TapState.Seq + 1
-        TapRemote:FireServer({ ClientSequence = TapState.Seq, Auto = false, Source = "screen" })
-        TapState.Count = TapState.Count + 1
-    end
-end)
-
-local RebirthState = { Selected = false, Highest = false, SelectedIndex = 1, Delay = 1, Count = 0 }
-local RebirthOptions = {}
-local RebirthIndexByName = {}
-
-local function rebuildRebirthOptions()
-    RebirthOptions = {}
-    RebirthIndexByName = {}
-    local maxOptions = 5
-    local data = getData()
-    if data and RebirthButtonConfig then
-        local unlocked = data.Upgrades and data.Upgrades.RebirthButtons or 0
-        local count = RebirthButtonConfig.GetOptionCount(unlocked, "Main")
-        if count and count > 0 then maxOptions = count end
-    end
-    for i = 1, maxOptions do
-        local amt = RebirthConfig.GetAmountFromIndex(i)
-        if amt then
-            local label = tostring(amt)
-            table.insert(RebirthOptions, label)
-            RebirthIndexByName[label] = i
+function utils.dropdown(tab, text, settings, key, values, flag, mapper)
+    local initial = mapper and tostring(settings[key]) or settings[key]
+    return tab:CreateDropdown({
+        name = text,
+        options = values,
+        value = initial,
+        multiSelect = false,
+        flag = flag,
+        callback = function(value)
+            local choice = selectedOne(value)
+            if choice ~= nil then settings[key] = mapper and mapper(choice) or choice end
         end
-    end
+    })
 end
 
-rebuildRebirthOptions()
-
-task.spawn(function()
-    while true do
-        task.wait(RebirthState.Delay)
-        if not (RebirthState.Selected or RebirthState.Highest) then continue end
-        local data = getData()
-        if not data then continue end
-        local coins = (data.Currencies and data.Currencies.Coins) or 0
-        local rebirths = (data.Statistics and data.Statistics.Rebirths) or 0
-        if RebirthState.Highest then
-            local bestIdx = 0
-            for i = 1, #RebirthOptions do
-                local amt = RebirthConfig.GetAmountFromIndex(i)
-                if not amt then break end
-                local price = RebirthConfig.GetPrice(amt, rebirths)
-                if price and coins >= price then bestIdx = i else break end
-            end
-            if bestIdx > 0 then
-                RebirthRemote:FireServer({ Index = bestIdx })
-                RebirthState.Count = RebirthState.Count + 1
-            end
-        elseif RebirthState.Selected then
-            local amt = RebirthConfig.GetAmountFromIndex(RebirthState.SelectedIndex)
-            if amt then
-                local price = RebirthConfig.GetPrice(amt, rebirths)
-                if price and coins >= price then
-                    RebirthRemote:FireServer({ Index = RebirthState.SelectedIndex })
-                    RebirthState.Count = RebirthState.Count + 1
-                end
-            end
-        end
-    end
-end)
-
-local JumpState = { Running = false, Delay = 1, Count = 0 }
-
-local function attemptBuyJump()
-    local data = getData()
-    if not data then return false end
-    local config = PhysicalUpgradeConfig.Get("+1 Jump")
-    if not config then return false end
-    local nextIdx = PhysicalUpgradeConfig.GetOwned(data, config) + 1
-    local price = PhysicalUpgradeConfig.GetPrice(config, nextIdx)
-    local locked = PhysicalUpgradeConfig.GetLockedIsland(data, config, nextIdx)
-    if not price or locked then return false end
-    
-    local currency = data
-    local paths = CurrencyConfig.Paths[config.Currency]
-    if paths then
-        for _, v in ipairs(paths) do
-            if type(currency) == "table" then currency = currency[v] end
-        end
-    end
-    if type(currency) ~= "number" or currency < price then return false end
-    
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local savedPos = hrp and hrp.Position or nil
-    local machine = Workspace:FindFirstChild("double jump machine")
-    if machine then
-        local pos = getPartPos(machine)
-        if pos then TeleportTo(pos) end
-    end
-    JumpRemote:InvokeServer({ Index = nextIdx, Upgrade = "+1 Jump" })
-    if savedPos then
-        task.delay(1, function()
-            local hrp2 = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp2 then TeleportTo(savedPos) end
-        end)
-    end
-    return true
-end
-
-task.spawn(function()
-    while true do
-        task.wait(JumpState.Delay)
-        if not JumpState.Running then continue end
-        if attemptBuyJump() then
-            JumpState.Count = JumpState.Count + 1
-        end
-    end
-end)
-
-local SkillState = { Running = false, Delay = 1, Count = 0 }
-
-task.spawn(function()
-    while true do
-        task.wait(SkillState.Delay)
-        if not SkillState.Running then continue end
-        local data = getData()
-        if not data then continue end
-        local unlocked = (data.SkillTree and data.SkillTree.Unlocked) or {}
-        local gems = (data.Currencies and data.Currencies.Gems) or 0
-        
-        local function scan(node, parentUnlocked)
-            if type(node) ~= "table" or not node.Name then return false end
-            if unlocked[node.Name] or node.Origin then
-                for _, dir in ipairs({"N", "S", "NE", "NW", "SE", "SW"}) do
-                    if type(node[dir]) == "table" and scan(node[dir], true) then return true end
-                end
-            elseif parentUnlocked and not node.Category and not node.Origin then
-                local price = SkillTreeFormula.GetPrice(data, node.Name)
-                if price and price <= gems then
-                    local lockedShop = SkillTreeRequirements.GetLockedShop(data, node)
-                    local lockedIsland = SkillTreeRequirements.GetLockedIsland(data, node)
-                    local withheld = SkillTreeFormula.IsWithheld(data, node.Name)
-                    if not lockedShop and not lockedIsland and not withheld then
-                        local res = SkillTreeService:Unlock({ Name = node.Name })
-                        if type(res) == "table" and res.Success then
-                            SkillState.Count = SkillState.Count + 1
-                            return true
-                        end
-                    end
-                end
-            end
-            return false
-        end
-        
-        for _, tree in pairs(SkillTreeConfig) do
-            if scan(tree, true) then break end
-        end
-    end
-end)
-
-local QuestState = { Running = false, Delay = 1, Count = 0 }
-
-task.spawn(function()
-    while true do
-        task.wait(QuestState.Delay)
-        if not QuestState.Running then continue end
-        local data = getData()
-        if not data or not data.Quests then continue end
-        for name, qData in pairs(data.Quests) do
-            local config = QuestConfig.Definitions and QuestConfig.Definitions[name]
-            if config and not qData.Claimed then
-                local completed = qData.Completed
-                local amount = qData.Amount or 0
-                local goal = config.Goal or 0
-                if completed or (goal > 0 and amount >= goal) then
-                    if ClaimQuestRF then ClaimQuestRF:InvokeServer({ Quest = name })
-                    elseif ClaimQuestRE then ClaimQuestRE:FireServer({ Quest = name }) end
-                    QuestState.Count = QuestState.Count + 1
-                    task.wait(0.1)
-                end
-            end
-        end
-    end
-end)
-
--- Seq is a per-session request counter, like EggController's local v_u_73.
-local HatchState = {
-    HatchRunning = false,
-    SelectedEgg = nil, SelectedAmount = 1,
-    HatchDelay = 0.5,
-    isRequestPending = false,
-    lastHatchResultTime = 0,
-    Seq = 0,
-    PendingSeq = nil, PendingEgg = nil, PendingAmount = 1,
-    Hatched = 0, Status = "Idle",
-}
-
-EggService.EggHatchResult:Connect(function(result)
-    if type(result) ~= "table" then return end
-    if not HatchState.isRequestPending then return end
-    if result.Seq ~= nil and result.Seq ~= HatchState.PendingSeq then return end
-    if result.Egg ~= nil and result.Egg ~= HatchState.PendingEgg then return end
-
-    HatchState.isRequestPending = false
-    HatchState.lastHatchResultTime = os.clock()
-
-    if result.Success == true then
-        local amount = type(result.Pets) == "table" and #result.Pets
-            or tonumber(result.Count) or HatchState.PendingAmount or 1
-        HatchState.Hatched = HatchState.Hatched + amount
-        HatchState.Status = "Hatch successful | total " .. HatchState.Hatched
-    elseif result.Error then
-        HatchState.Status = "Hatch rejected: " .. tostring(result.Error)
-    else
-        HatchState.Status = "Hatch failed: server returned no success flag"
-    end
-end)
-
-local function getEggModel(eggName)
-    local eggsFolder = Workspace:FindFirstChild("Eggs")
-    if not eggsFolder then return nil end
-    local model = eggsFolder:FindFirstChild(eggName)
-    if model and model:IsA("Model") then return model end
-    return nil
-end
-
-local function getEggPos(eggName)
-    local eggModel = getEggModel(eggName)
-    if not eggModel then return nil end
-
-    -- The game's EggController checks EggIdleAnimation.GetPosition(model),
-    -- falling back to the part returned by its own Egg-part resolver.
-    if EggIdleAnimation and type(EggIdleAnimation.GetPosition) == "function" then
-        local ok, position = pcall(EggIdleAnimation.GetPosition, eggModel)
-        if ok and typeof(position) == "Vector3" then return position end
-    end
-
-    local eggRoot = eggModel:FindFirstChild("Egg")
-    if eggRoot and eggRoot:IsA("BasePart") then
-        return eggRoot.Position
-    elseif eggRoot and eggRoot:IsA("Model") then
-        local rootPart = eggRoot.PrimaryPart or eggRoot:FindFirstChildWhichIsA("BasePart", true)
-        if rootPart then return rootPart.Position end
-    end
-
-    local rootPart = eggModel.PrimaryPart or eggModel:FindFirstChildWhichIsA("BasePart", true)
-    return rootPart and rootPart.Position or nil
-end
-
-local function getCharacterRoot()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    -- EggController checks HumanoidRootPart.Position, not an arbitrary PrimaryPart.
-    return char:FindFirstChild("HumanoidRootPart")
-end
-
--- The client egg selector uses the animated egg position and a 10-stud
--- threshold (12 studs for the special 30M Visits egg). Keep a safety margin.
-local function TeleportToRange(targetPos, maxDistance)
-    if typeof(targetPos) ~= "Vector3" then return false, "invalid egg position" end
-    maxDistance = tonumber(maxDistance) or 8.5
-
-    for attempt = 1, 4 do
-        local hrp = getCharacterRoot()
-        if not hrp then return false, "HumanoidRootPart missing" end
-
-        if (hrp.Position - targetPos).Magnitude <= maxDistance then
-            return true
-        end
-
-        local destination = targetPos + Vector3.new(0, 2.5, 0)
-        local rotation = hrp.CFrame - hrp.Position
-        hrp.CFrame = CFrame.new(destination) * rotation
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        task.wait(0.2)
-
-        hrp = getCharacterRoot()
-        if hrp and (hrp.Position - targetPos).Magnitude <= maxDistance then
-            return true
-        end
-    end
-
-    return false, "teleport did not reach the egg"
-end
-
-task.spawn(function()
-    while true do
-        task.wait(0.15)
-        if not HatchState.HatchRunning then continue end
-
-        local ok, err = pcall(function()
-            if HatchState.isRequestPending then return end
-            if os.clock() - HatchState.lastHatchResultTime < HatchState.HatchDelay then return end
-
-            local data = getData()
-            if not data then
-                HatchState.Status = "Waiting for player data"
-                return
-            end
-
-            local petsData = data.Pets or {}
-            local ownedPets = petsData.Owned or {}
-            local invCount = 0
-            for _ in pairs(ownedPets) do invCount = invCount + 1 end
-            local limit = petsData.StorageLimit or math.huge
-            if invCount >= limit then
-                HatchState.Status = "Pet storage full"
-                return
-            end
-
-            local eggName = HatchState.SelectedEgg
-            if not eggName or not EggConfig[eggName] then
-                HatchState.Status = "Select a valid egg"
-                return
-            end
-
-            local amount = HatchState.SelectedAmount or 1
-            local price = EggPricing.GetTotal(data, eggName, EggConfig[eggName].Price, amount)
-            local coins = (data.Currencies and data.Currencies.Coins) or 0
-            if not price then
-                HatchState.Status = "Could not calculate egg price"
-                return
-            end
-            if coins < price then
-                HatchState.Status = string.format("Not enough coins (%s / %s)", tostring(coins), tostring(price))
-                return
-            end
-
-            if amount == 8 then
-                local hasPerk = GamepassPerks.Has(data, "x8Egg")
-                local hasBoost = BoostFormula.HasType(data, "OctoHatch")
-                if not hasPerk and not hasBoost then
-                    HatchState.Status = "x8 Hatch requires the perk"
-                    return
-                end
-            end
-
-            local eggModel = getEggModel(eggName)
-            local pos = eggModel and getEggPos(eggName) or nil
-            if not pos then
-                HatchState.Status = "Egg not spawned: " .. tostring(eggName)
-                return
-            end
-
-            HatchState.Status = "Teleporting to " .. eggName .. "..."
-            local normalRange = eggName == "30M Visits" and 12 or 10
-            local reached, reason = TeleportToRange(pos, eggName == "30M Visits" and 10.5 or 8.5)
-            if not reached then
-                HatchState.Status = "Teleport failed: " .. tostring(reason)
-                return
-            end
-
-            -- Give the server time to observe the replicated character position,
-            -- then verify against the same range used by EggController.
-            HatchState.Status = "Waiting for position replication..."
-            task.wait(0.5)
-            local currentEggPos = getEggPos(eggName) or pos
-            local hrp = getCharacterRoot()
-            if not hrp or (hrp.Position - currentEggPos).Magnitude > normalRange then
-                HatchState.Status = "Too far from egg after teleport replication"
-                return
-            end
-
-            HatchState.Seq = HatchState.Seq + 1
-            HatchState.PendingSeq = HatchState.Seq
-            HatchState.PendingEgg = eggName
-            HatchState.PendingAmount = amount
-            HatchState.isRequestPending = true
-            HatchState.Status = "Sending auto-hatch request..."
-            local fired, fireError = pcall(function()
-                EggService.EggHatchRequested:Fire({
-                    Egg = eggName,
-                    Count = amount,
-                    Auto = true,
-                    Seq = HatchState.Seq,
-                })
-            end)
-            if not fired then
-                HatchState.isRequestPending = false
-                HatchState.Status = "Hatch remote error: " .. tostring(fireError)
-                return
-            end
-
-            local requestSeq = HatchState.PendingSeq
-            task.delay(12, function()
-                if HatchState.isRequestPending and HatchState.PendingSeq == requestSeq then
-                    HatchState.isRequestPending = false
-                    HatchState.Status = "No hatch response from server"
-                    HatchState.lastHatchResultTime = os.clock()
-                end
-            end)
-        end)
-
-        if not ok then
-            HatchState.isRequestPending = false
-            HatchState.Status = "Auto hatch error: " .. tostring(err)
-        end
-    end
-end)
-
-local ItemState = {
-    BoostRunning = false, GiftRunning = false, TreatRunning = false, TotemRunning = false,
-    Delay = 1, SelectedBoosts = {}, SelectedGifts = {}, SelectedTreats = {}, SelectedTotems = {},
-    Used = 0,
-}
-
-task.spawn(function()
-    while true do
-        task.wait(ItemState.Delay)
-        local data = getData()
-        if not data then continue end
-        local items = (data.Items and data.Items.Owned) or {}
-        local function hasItem(name) return (items[name] or 0) > 0 end
-        
-        if ItemState.BoostRunning then
-            local boosts = data.Boosts or {}
-            for _, name in ipairs(ItemState.SelectedBoosts) do
-                if (boosts[name] or 0) > 0 then
-                    BoostRemote:InvokeServer(name)
-                    ItemState.Used = ItemState.Used + 1
-                    break
-                end
-            end
-        end
-        
-        if ItemState.GiftRunning then
-            for _, name in ipairs(ItemState.SelectedGifts) do
-                if hasItem(name) then
-                    GiftController:Open(name, 1)
-                    ItemState.Used = ItemState.Used + 1
-                    break
-                end
-            end
-        end
-        
-        if ItemState.TreatRunning then
-            local petId = nil
-            for id in pairs((data.Pets and data.Pets.Owned) or {}) do petId = id; break end
-            if petId then
-                for _, name in ipairs(ItemState.SelectedTreats) do
-                    if hasItem(name) then
-                        ItemService:UseOnPet({ Item = name, PetId = petId, Amount = 1 })
-                        ItemState.Used = ItemState.Used + 1
-                        break
-                    end
-                end
-            end
-        end
-        
-        if ItemState.TotemRunning then
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                for _, name in ipairs(ItemState.SelectedTotems) do
-                    if hasItem(name) then
-                        ItemService:PlaceTotem({ TotemName = name, Position = hrp.Position + hrp.CFrame.LookVector * 5 })
-                        ItemState.Used = ItemState.Used + 1
-                        break
-                    end
-                end
-            end
-        end
-    end
-end)
-
-local CraftState = {
-    GoldenRunning = false,
-    PetsToUse = 6,
-    SelectedMutation = "None",
-    isRequestPending = false,
-    lastCraftResultTime = 0,
-    GoldenCrafted = 0,
-    RequestId = 0,
-    PendingRequestId = nil,
-    Status = "Idle",
-}
-
-MachineService.MachineCraftResult:Connect(function(result)
-    -- Other machine/fuse requests can share this result event.
-    if type(result) ~= "table" or result.Machine ~= "Golden" then return end
-    if not CraftState.isRequestPending then return end
-
-    CraftState.isRequestPending = false
-    CraftState.lastCraftResultTime = os.clock()
-
-    if type(result) == "table" and result.Success == true then
-        CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
-        CraftState.Status = "Golden craft successful"
-    elseif type(result) == "table" and result.Error then
-        CraftState.Status = "Golden craft rejected: " .. tostring(result.Error)
-    else
-        CraftState.Status = "Golden craft result received"
-    end
-end)
-
-local function getGoldenMachineTarget()
-    -- The game's interaction controller maps the tag by Instance.Name.
-    -- Do not use an arbitrary UpgradeName fallback; it may not be recognized.
-    for _, point in ipairs(CollectionService:GetTagged("InteractionPoint")) do
-        if point.Name == "Golden" and (point:IsA("BasePart") or point:IsA("Model")) then
-            return point
-        end
-    end
-    return nil
-end
-
-local function getCharacterRootParts()
-    local char = LocalPlayer.Character
-    if not char then return nil, nil end
-    -- MachineController uses Character.PrimaryPart for InteractionPoint checks.
-    return char.PrimaryPart, char:FindFirstChild("HumanoidRootPart")
-end
-
-local function getGoldenBoundsPosition(interactionPoint, primaryPart)
-    local boundsCFrame, boundsSize = getObjectBounds(interactionPoint)
-    if not boundsCFrame or not boundsSize or not primaryPart then return false end
-
-    -- Match MachineController's PadProbe.Position(primaryPart) calculation.
-    local probePosition = PadProbe.Position(primaryPart)
-    if typeof(probePosition) ~= "Vector3" then return false end
-    local localPosition = boundsCFrame:PointToObjectSpace(probePosition)
-    local half = boundsSize / 2
-
-    -- Matches the game's InteractionPoint test: X/Z use the bounds, while
-    -- the vertical allowance is extended by 2 studs.
-    return math.abs(localPosition.X) <= half.X
-        and math.abs(localPosition.Y) <= half.Y + 2
-        and math.abs(localPosition.Z) <= half.Z
-end
-
-local function TeleportIntoInteractionPoint(interactionPoint)
-    local boundsCFrame, boundsSize = getObjectBounds(interactionPoint)
-    if not boundsCFrame or not boundsSize then
-        return false, "interaction point has no bounds"
-    end
-
-    -- Stand just above the top face. The game's proximity helper allows an
-    -- extra 2 studs vertically; teleporting to the model center can place the
-    -- avatar inside collidable geometry and get pushed back out.
-    local localTarget = Vector3.new(0, boundsSize.Y / 2 + 1, 0)
-    local destination = boundsCFrame:PointToWorldSpace(localTarget)
-
-    for attempt = 1, 4 do
-        local root, hrp = getCharacterRootParts()
-        if not root or not hrp then return false, "character root missing" end
-
-        if getGoldenBoundsPosition(interactionPoint, root) then
-            return true
-        end
-
-        local rotation = hrp.CFrame - hrp.Position
-        hrp.CFrame = CFrame.new(destination) * rotation
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        task.wait(0.2)
-
-        root = select(1, getCharacterRootParts())
-        if root and getGoldenBoundsPosition(interactionPoint, root) then
-            return true
-        end
-    end
-
-    return false, "teleport did not enter the Golden interaction bounds"
-end
-
-local function hasPetValue(value)
-    if value == nil or value == false or value == "" then return false end
-    if type(value) == "table" then return next(value) ~= nil end
-    return true
-end
-
-local function petMatchesMutation(pet, mutation)
-    local mut = pet.Mutation
-    if mutation == "None" then
-        return not hasPetValue(mut)
-    end
-    if type(mut) == "string" then return mut == mutation end
-    if type(mut) == "table" then
-        for _, m in pairs(mut) do
-            if m == mutation then return true end
-        end
-    end
-    return false
-end
-
-task.spawn(function()
-    while true do
-        task.wait(0.15)
-        if not CraftState.GoldenRunning then continue end
-
-        local ok, err = pcall(function()
-            if CraftState.isRequestPending then return end
-            if os.clock() - CraftState.lastCraftResultTime < 1 then return end
-
-            local data = getData()
-            if not data then
-                CraftState.Status = "Waiting for player data"
-                return
-            end
-
-            local groups = {}
-            local owned = (data.Pets and data.Pets.Owned) or {}
-            local eligibleCount = 0
-            local goldenSourceTier = (MachineConfig.Golden and MachineConfig.Golden.SourceTier) or "Normal"
-            for id, pet in pairs(owned) do
-                if type(pet) == "table"
-                    and pet.Tier == goldenSourceTier
-                    and pet.Locked ~= true
-                    and pet.Frozen == nil
-                    and not hasPetValue(pet.Enchant)
-                    and petMatchesMutation(pet, CraftState.SelectedMutation) then
-                    eligibleCount = eligibleCount + 1
-                    if type(pet.Name) == "string" then
-                        groups[pet.Name] = groups[pet.Name] or {}
-                        table.insert(groups[pet.Name], id)
-                    end
-                end
-            end
-
-            local selected
-            local selectedName
-            for petName, ids in pairs(groups) do
-                if #ids >= CraftState.PetsToUse then
-                    selected = {}
-                    selectedName = petName
-                    for i = 1, CraftState.PetsToUse do
-                        selected[i] = ids[i]
-                    end
-                    break
-                end
-            end
-
-            if not selected then
-                CraftState.Status = string.format(
-                    "Need %d same-name eligible pets (found %d eligible total)",
-                    CraftState.PetsToUse, eligibleCount
-                )
-                return
-            end
-
-            local machine = getGoldenMachineTarget()
-            if not machine then
-                CraftState.Status = "Golden InteractionPoint not found"
-                return
-            end
-
-            CraftState.Status = "Teleporting to Golden Machine..."
-            local reached, reason = TeleportIntoInteractionPoint(machine)
-            if not reached then
-                CraftState.Status = "Golden teleport failed: " .. tostring(reason)
-                return
-            end
-
-            CraftState.Status = "Waiting for Golden position replication..."
-            task.wait(0.5)
-            local primaryRoot = select(1, getCharacterRootParts())
-            if not primaryRoot or not getGoldenBoundsPosition(machine, primaryRoot) then
-                CraftState.Status = "Golden position not replicated inside interaction bounds"
-                return
-            end
-
-            CraftState.RequestId = CraftState.RequestId + 1
-            CraftState.PendingRequestId = CraftState.RequestId
-            CraftState.isRequestPending = true
-            CraftState.Status = "Sending Golden craft request for " .. selectedName .. "..."
-            local fired, fireError = pcall(function()
-                MachineService.MachineCraftRequested:Fire({
-                    Machine = "Golden",
-                    PetIds = selected,
-                })
-            end)
-            if not fired then
-                CraftState.isRequestPending = false
-                CraftState.Status = "Golden remote error: " .. tostring(fireError)
-                return
-            end
-
-            local requestId = CraftState.PendingRequestId
-            task.delay(8, function()
-                if CraftState.isRequestPending and CraftState.PendingRequestId == requestId then
-                    CraftState.isRequestPending = false
-                    CraftState.lastCraftResultTime = os.clock()
-                    CraftState.Status = "No Golden craft response from server"
-                end
-            end)
-        end)
-
-        if not ok then
-            CraftState.isRequestPending = false
-            CraftState.Status = "Golden auto-craft error: " .. tostring(err)
-        end
-    end
-end)
-
-local HoneyPotState = {
-    ClaimRunning = false, CraftRunning = false, AutoTeleport = true,
-    Delay = 0.5, SelectedRecipe = "Auto", CraftAmount = 1,
-    Claimed = 0, Crafted = 0, Failed = 0, Status = "Idle", Mutex = false,
-}
-
-local function honeyPotSlots()
-    local data = getData()
-    if not data or type(data.HoneyPot) ~= "table" then return {} end
-    return data.HoneyPot.Slots or {}
-end
-
-local function honeyPotSlotState(slot)
-    if slot == nil then return "Empty" end
-    local now = Workspace:GetServerTimeNow()
-    if HoneyPotConfig.Progress(slot, now) >= slot.Amount then return "Ready" end
-    return "Blending"
-end
-
-local function honeyPotMachinePos()
-    local machine = HoneyPotConfig.FindMachine(Workspace)
-    if not machine then return nil end
-    return getPartPos(machine)
-end
-
-local function honeyPotNear()
-    local pos = honeyPotMachinePos()
-    if not pos then return false end
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-    return (hrp.Position - pos).Magnitude <= HoneyPotConfig.Range
-end
-
-local function honeyPotFindEmpty()
-    local slots = honeyPotSlots()
-    for i = 1, HoneyPotConfig.SlotCount do
-        if slots[tostring(i)] == nil then return i end
-    end
-    return nil
-end
-
-local function honeyPotFindReady()
-    local slots = honeyPotSlots()
-    for i = 1, HoneyPotConfig.SlotCount do
-        local slot = slots[tostring(i)]
-        if slot and honeyPotSlotState(slot) == "Ready" then return i end
-    end
-    return nil
-end
-
-local rarityMap = {Common=1, Uncommon=2, Rare=3, Epic=4, Legendary=5, Mythical=6, Mythic=6}
-local function getRarityRank(item)
-    local rarity = item and item.Rarity
-    if type(rarity) == "number" then
-        if rarity < 10 then return 1 end
-        if rarity < 100 then return 2 end
-        if rarity < 1000 then return 3 end
-        if rarity < 10000 then return 4 end
-        return 6
-    end
-    if type(rarity) == "string" then return rarityMap[rarity] or 1 end
-    return 1
-end
-
-local function honeyPotFindRecipe(data)
-    if not data then return nil, 0 end
-    if HoneyPotState.SelectedRecipe ~= "Auto" then
-        local recipe = HoneyPotConfig.ByKey[HoneyPotState.SelectedRecipe]
-        if recipe then
-            local max = HoneyPotConfig.MaxCraftable(data, recipe)
-            if max > 0 then return recipe, max end
-        end
-        return nil, 0
-    end
-    local best, bestRank, bestMax = nil, -1, 0
-    for _, recipe in ipairs(HoneyPotConfig.Recipes) do
-        local max = HoneyPotConfig.MaxCraftable(data, recipe)
-        if max > 0 then
-            local output = HoneyPotConfig.Describe(recipe.Output)
-            local rank = getRarityRank(output)
-            if rank > bestRank or (rank == bestRank and max > bestMax) then
-                best, bestRank, bestMax = recipe, rank, max
-            end
-        end
-    end
-    return best, bestMax
-end
-
-task.spawn(function()
-    while true do
-        task.wait(HoneyPotState.Delay)
-        if not (HoneyPotState.ClaimRunning or HoneyPotState.CraftRunning) or HoneyPotState.Mutex then continue end
-        HoneyPotState.Mutex = true
-        
-        if HoneyPotState.AutoTeleport and not honeyPotNear() then
-            local pos = honeyPotMachinePos()
-            if pos then
-                HoneyPotState.Status = "Teleporting to machine..."
-                TeleportTo(pos)
-                HoneyPotState.Mutex = false
-                continue
-            end
-        end
-        if not honeyPotNear() then
-            HoneyPotState.Status = "Not at machine"
-            HoneyPotState.Mutex = false
-            continue
-        end
-        
-        if HoneyPotState.ClaimRunning then
-            local readySlot = honeyPotFindReady()
-            if readySlot then
-                local resp = HoneyPotService:Claim(readySlot)
-                if type(resp) == "table" and resp.Success then
-                    HoneyPotState.Claimed = HoneyPotState.Claimed + 1
-                    HoneyPotState.Status = "Claimed slot " .. readySlot .. " | total " .. HoneyPotState.Claimed
-                else
-                    HoneyPotState.Failed = HoneyPotState.Failed + 1
-                end
-                HoneyPotState.Mutex = false
-                continue
-            end
-        end
-        
-        if HoneyPotState.CraftRunning then
-            local emptySlot = honeyPotFindEmpty()
-            if emptySlot then
-                local data = getData()
-                local recipe, max = honeyPotFindRecipe(data)
-                if recipe then
-                    local amount = math.min(HoneyPotState.CraftAmount, max, HoneyPotConfig.MaxAmount)
-                    if amount >= 1 then
-                        local resp = HoneyPotService:Craft(recipe.Key, amount)
-                        if type(resp) == "table" and resp.Success then
-                            HoneyPotState.Crafted = HoneyPotState.Crafted + 1
-                            local output = HoneyPotConfig.Describe(recipe.Output)
-                            local name = (output and output.Name) or recipe.Key
-                            HoneyPotState.Status = "Crafted " .. name .. " | total " .. HoneyPotState.Crafted
-                        else
-                            HoneyPotState.Failed = HoneyPotState.Failed + 1
-                        end
-                    end
-                else
-                    HoneyPotState.Status = "No craftable recipe"
-                end
-            else
-                HoneyPotState.Status = "All slots busy"
-            end
-        end
-        HoneyPotState.Mutex = false
-    end
-end)
-
-local TapChestState = {
-    CollectRunning = false, OpenRunning = false, Mutex = false,
-    Delay = 0.5, Collected = 0, Opened = 0, Failed = 0, Status = "Idle",
-}
-
-local function getAttrFirst(model, names)
-    for _, n in ipairs(names) do
-        local v = model:GetAttribute(n)
-        if v ~= nil then return v end
-    end
-    return nil
-end
-
-local function getChestId(model)
-    local v = getAttrFirst(model, {"TS2TapChestId", "TapChestId", "ChestId", "Id", "TS2TapChestID", "TapChestID", "ChestID", "ID"})
-    return type(v) == "string" and v or nil
-end
-
-local function getChestPos(model)
-    local front = getAttrFirst(model, {"TS2TapChestFront", "TapChestFront", "Front"})
-    local size = getAttrFirst(model, {"TS2TapChestSize", "TapChestSize", "Size"})
-    if typeof(front) == "CFrame" then
-        if typeof(size) == "Vector3" then
-            local base = front.Position - Vector3.new(0, 1, 0) * size.Y * 0.5
-            return base + front.LookVector * (size.Z * 0.5 + TapChestConfig.PromptInset)
-                + Vector3.new(0, 1, 0) * TapChestConfig.PromptHeight
-        end
-        return front.Position
-    end
-    return getPartPos(model)
-end
-
-local function isChestReady(model)
-    if not CollectionService:HasTag(model, "Interactable") then return false end
-    return model:GetAttribute("InteractableId") == "TapChest"
-end
-
-local function getReadyChests()
-    local list = {}
-    for _, model in CollectionService:GetTagged(TapChestConfig.Tag) do
-        if model:IsA("Model") and model.Parent and isChestReady(model) then
-            table.insert(list, model)
-        end
-    end
-    return list
-end
-
-local function processTapChest(model, timeout)
-    local pos = getChestPos(model)
-    if not pos then return false, "no position" end
-    if not TeleportTo(pos) then return false, "unreachable" end
-    TapChestController:Interact(model)
-    local deadline = os.clock() + (timeout or 20)
-    while os.clock() < deadline do
-        if not isChestReady(model) then return true, "opened" end
-        task.wait(0.5)
-    end
-    local chestId = getChestId(model)
-    if chestId then
-        local holder = {}
-        task.spawn(function()
-            local res = TapChestService:Claim(chestId)
-            holder.Result = res
-            holder.Done = true
-        end)
-        local deadline2 = os.clock() + 6
-        while not holder.Done and os.clock() < deadline2 do task.wait() end
-        local result = holder.Result
-        if type(result) == "table" and result.Success then return true, result.Coins or 0 end
-    end
-    return false, "failed"
-end
-
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if not (TapChestState.CollectRunning or TapChestState.OpenRunning) or TapChestState.Mutex then continue end
-        TapChestState.Mutex = true
-        local ready = getReadyChests()
-        if #ready == 0 then
-            TapChestState.Status = "No ready chests"
-            TapChestState.Mutex = false
-            continue
-        end
-        for _, model in ready do
-            if not (TapChestState.CollectRunning or TapChestState.OpenRunning) then break end
-            local timeout = TapChestState.OpenRunning and 25 or 20
-            local success, info = processTapChest(model, timeout)
-            if success then
-                if TapChestState.CollectRunning then
-                    TapChestState.Collected = TapChestState.Collected + 1
-                    TapChestState.Status = "Collected " .. TapChestState.Collected
-                end
-                if TapChestState.OpenRunning then
-                    TapChestState.Opened = TapChestState.Opened + 1
-                    TapChestState.Status = "Opened " .. TapChestState.Opened
-                end
-            else
-                TapChestState.Failed = TapChestState.Failed + 1
-                TapChestState.Status = "Failed: " .. tostring(info)
-            end
-            task.wait(TapChestState.Delay)
-        end
-        TapChestState.Mutex = false
-    end
-end)
-
-local ClickerState = { Running = false, Delay = 0.5, Current = nil }
-
-local function getClickerChest()
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if obj:IsA("Model") and obj.Name == "ClickerChest" then return obj end
-    end
-    return nil
-end
-
-task.spawn(function()
-    while true do
-        task.wait(ClickerState.Delay)
-        if not ClickerState.Running then continue end
-        if not ClickerState.Current or not ClickerState.Current.Parent then
-            ClickerState.Current = getClickerChest()
-        end
-        if ClickerState.Current then
-            local pos = getPartPos(ClickerState.Current)
-            if pos then
-                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if hrp and (hrp.Position - pos).Magnitude > 10 then TeleportTo(pos) end
-            end
-        end
-    end
-end)
-
-local DigState = {
-    Running = false, Session = nil, LastHitTime = 0,
-    TotalHits = 0, TotalGames = 0, LastReward = nil, Status = "Idle",
-}
-
-local MinHitInterval = tonumber(DigConfig.MinHitInterval) or 0.2
-
-local function solveRawForCursor(target)
-    if target <= 0.5 then
-        return (-1 + math.sqrt(1 + 16 * target)) / 4
-    else
-        local u = (-1 + math.sqrt(1 + 16 * (1 - target))) / 4
-        return 1 - u
-    end
-end
-
-local function nextTimeForRaw(round, r)
-    local speed = round.Speed or 1
-    if speed <= 0 then return 0 end
-    local k = 0.6 * speed
-    local phase = round.Phase or 0
-    local eAsc  = ((r - phase) % 2) / k
-    local eDesc = ((2 - r - phase) % 2) / k
-    return math.min(eAsc, eDesc)
-end
-
-local function computePerfectTime(round, minTime)
-    if not round or not round.Speed or round.Speed <= 0 or not round.Center then return nil end
-    local r = solveRawForCursor(round.Center)
-    local elapsed = nextTimeForRaw(round, r)
-    local target = (round.Epoch or 0) + elapsed
-    local period = 2 / (0.6 * round.Speed)
-    local safety = 0
-    while target < minTime and safety < 1000 do
-        target = target + period
-        safety = safety + 1
-    end
-    return target
-end
-
-local function getDigZone()
-    local site = DigWorld.GetSite()
-    if site then
-        local zone = site:FindFirstChild("DigZone")
-        if zone then return zone end
-    end
-    local islands = Workspace:FindFirstChild("Ts2Islands")
-    if not islands then return nil end
-    local autumn = islands:FindFirstChild("Autumn")
-    if autumn then
-        local site2 = autumn:FindFirstChild("Digsite")
-        if site2 then
-            local zone = site2:FindFirstChild("DigZone")
-            if zone then return zone end
-        end
-    end
-    for _, island in ipairs(islands:GetChildren()) do
-        local site3 = island:FindFirstChild("Digsite")
-        if site3 then
-            local zone = site3:FindFirstChild("DigZone")
-            if zone then return zone end
-        end
-    end
-    return nil
-end
-
-local function isInDigZone()
-    if LocalPlayer:GetAttribute("AtDigsite") == true then return true end
-    local zone = getDigZone()
-    if not zone then return false end
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local res = DigWorld.Contains(zone, char)
-    if res then return true end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local pos = getPartPos(zone)
-    if hrp and pos then return (hrp.Position - pos).Magnitude <= 30 end
-    return false
-end
-
-local function cancelDigSession()
-    if DigState.Session and DigState.Session.Id then
-        local sid = DigState.Session.Id
-        task.spawn(function() DigComm:Cancel(sid) end)
-    end
-    DigState.Session = nil
-end
-
-local function processOneDigGame()
-    local zone = getDigZone()
-    if not zone then
-        DigState.Status = "Dig site not found"
-        return true
-    end
-    if not isInDigZone() then
-        local pos = getPartPos(zone)
-        if not pos then
-            DigState.Status = "Zone has no position"
-            return true
-        end
-        DigState.Status = "Teleporting to site..."
-        TeleportTo(pos)
-        local deadline = os.clock() + 3
-        while os.clock() < deadline do
-            if not DigState.Running then return false end
-            if isInDigZone() then break end
-            task.wait(0.1)
-        end
-        if not isInDigZone() then
-            DigState.Status = "Not detected at site"
-            return true
-        end
-    end
-    local resp = DigComm:Begin()
-    if not resp then
-        DigState.Status = "Begin failed"
-        task.wait(0.5)
-        return true
-    end
-    if resp.Error then
-        if resp.Error == "Cooldown" then
-            local mins = math.ceil((resp.Remaining or 0) / 60)
-            DigState.Status = string.format("Cooldown %dm", mins)
-            Notify({title = "Auto Dig", content = "Out of digs. Wait " .. mins .. " min.", duration = 4})
-            DigState.Running = false
-            return false
-        end
-        DigState.Status = "Begin error: " .. tostring(resp.Error)
-        task.wait(1)
-        return true
-    end
-    if not resp.Id then
-        DigState.Status = "Session missing Id"
-        task.wait(1)
-        return true
-    end
-    DigState.Session = resp
-    while DigState.Running and DigState.Session do
-        local session = DigState.Session
-        if not session.Round then
-            DigState.Session = nil
-            break
-        end
-        if session.Complete then
-            DigState.Session = nil
-            break
-        end
-        local now = Workspace:GetServerTimeNow()
-        local minTime = math.max(now + 0.02, DigState.LastHitTime + MinHitInterval + 0.02)
-        local target = computePerfectTime(session.Round, minTime)
-        if not target then
-            DigState.Session = nil
-            DigState.Status = "Invalid round"
-            break
-        end
-        while DigState.Running do
-            local t = Workspace:GetServerTimeNow()
-            if t >= target - 0.005 then break end
-            local remaining = target - t
-            if remaining > 0.05 then task.wait(math.min(remaining - 0.02, 0.1))
-            else task.wait() end
-        end
-        if not DigState.Running then return false end
-        local hitTime = Workspace:GetServerTimeNow()
-        local hResp = DigComm:Hit(session.Id, session.Round.Sequence, hitTime)
-        if not hResp then
-            DigState.Status = "Hit failed"
-            task.wait(0.5)
-            DigState.Session = nil
-            break
-        end
-        if hResp.Error then
-            if hResp.Error == "NoSession" or hResp.Error == "StaleRound" then
-                DigState.Session = nil
-                break
-            elseif hResp.Error == "Cooldown" then
-                local mins = math.ceil((hResp.Remaining or 0) / 60)
-                DigState.Status = string.format("Cooldown %dm", mins)
-                DigState.Running = false
-                return false
-            elseif hResp.Error == "TooSoon" then
-                task.wait(0.1)
-            elseif hResp.Error == "Busy" then
-                task.wait(0.2)
-            else
-                DigState.Session = nil
-                DigState.Status = "Error: " .. tostring(hResp.Error)
-                task.wait(0.5)
-                break
-            end
+function utils.number(tab, text, settings, key, minimum, maximum, flag)
+    return tab:CreateInput({name = text, value = tostring(settings[key]), numeric = true, placeholder = text, flag = flag, callback = function(value)
+        local number = tonumber(value)
+        if number and number == number and number >= minimum and number <= maximum then
+            settings[key] = number
         else
-            DigState.LastHitTime = hitTime
-            DigState.TotalHits = DigState.TotalHits + 1
-            if hResp.Complete then
-                DigState.TotalGames = DigState.TotalGames + 1
-                DigState.LastReward = hResp.Reward
-                DigState.Status = "Done: " .. tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1)
-                DigState.Session = nil
-                Notify({title = "Dig Complete", content = tostring(hResp.Reward) .. " x" .. tostring(hResp.Amount or 1), duration = 3})
-                task.wait(1.1)
-                break
-            else
-                DigState.Session = hResp
-                DigState.Status = "Hit " .. DigState.TotalHits
+            notify(text, "Enter a number from " .. minimum .. " to " .. maximum, 3)
+        end
+    end})
+end
+
+function utils.multi(tab, text, settings, key, values, flag)
+    local selected = {}
+    for name, enabled in pairs(settings[key]) do if enabled then table.insert(selected, name) end end
+    table.sort(selected)
+    return tab:CreateDropdown({name = text, options = values, value = selected, multiSelect = true, flag = flag,
+        callback = function(value)
+            table.clear(settings[key])
+            for _, name in ipairs(selectedList(value)) do
+                if type(name) == "string" and table.find(values, name) then settings[key][name] = true end
+            end
+        end
+    })
+end
+
+function utils.keys(value)
+    local keys = {}
+    for key in pairs(value) do table.insert(keys, key) end
+    table.sort(keys)
+    return keys
+end
+
+function utils.formatNumber(number)
+    return utils.modules.format:Abbreviate(tonumber(number) or 0, true)
+end
+
+function utils.sortedEggs()
+    local eggs = {}
+    for name, config in pairs(utils.modules.eggs) do
+        if name ~= "Test" and type(config.Price) == "number" and config.Price > 0 and not config.Currency then
+            table.insert(eggs, {Name = name, Price = config.Price})
+        end
+    end
+    table.sort(eggs, function(a, b) return a.Price == b.Price and a.Name < b.Name or a.Price < b.Price end)
+    return eggs
+end
+
+function utils.sortedIslands()
+    local islands = {}
+    for name, config in pairs(utils.modules.islands.Islands) do table.insert(islands, {Name = name, Config = config}) end
+    table.sort(islands, function(a, b)
+        if a.Config.Order ~= b.Config.Order then return a.Config.Order < b.Config.Order end
+        if a.Config.Price ~= b.Config.Price then return a.Config.Price < b.Config.Price end
+        return a.Name < b.Name
+    end)
+    return islands
+end
+
+function utils.character()
+    local character = utils.player.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    assert(root and humanoid and humanoid.Health > 0, "Waiting for character")
+    return root, humanoid
+end
+
+function utils.position(instance)
+    if not instance then return end
+    if instance:IsA("BasePart") then return instance.CFrame end
+    if instance:IsA("Model") then return instance:GetPivot() end
+    local part = instance:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.CFrame
+end
+
+function utils.closeCraftMenus()
+    for _, menu in ipairs({"Golden", "Diamond", "RainbowFuse", "CraftingRoll"}) do
+        pcall(utils.modules.menu.Close, utils.modules.menu, menu)
+    end
+end
+
+function utils.trip(key, target, callback)
+    assert(not utils.travel.Owner, "Character busy: " .. tostring(utils.travel.Owner))
+    local root = utils.character()
+    local destination = typeof(target) == "CFrame" and target or utils.position(target)
+    assert(destination, "Location unavailable")
+    utils.travel.Owner, utils.travel.Origin = key, root.CFrame
+    local success, result = pcall(function()
+        root.CFrame = destination + Vector3.new(0, 3, 0)
+        root.AssemblyLinearVelocity = Vector3.zero
+        task.wait(1.2)
+        assert(runtime.Alive and root.Parent and utils.travel.Owner == key, "Travel interrupted")
+        return callback()
+    end)
+    if key == "Golden" or key == "Diamond" or key == "Shiny" then
+        utils.closeCraftMenus()
+    end
+    if root.Parent and utils.travel.Origin then
+        root.CFrame = utils.travel.Origin
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.2)
+    end
+    utils.travel.Owner, utils.travel.Origin = nil, nil
+    if not success then error(result, 0) end
+    return result
+end
+
+function utils.protected(id, pet, data)
+    return pet.Locked or pet.Equip or pet.Enchant or pet.Enchant2 or pet.Reserved or table.find(data.Pets.Equipped, id) ~= nil
+end
+
+function utils.count(value)
+    local count = 0
+    for _ in pairs(value or {}) do count += 1 end
+    return count
+end
+
+function utils.stop()
+    for key, job in pairs(utils.jobs) do
+        if utils.controls[key .. "Switch"] then utils.controls[key .. "Switch"]:Set(false) else job.Enabled = false end
+    end
+end
+
+utils.load("pricing", "Shared.Pets.EggPricing")
+utils.load("perks", "Shared.Monetization.GamepassPerks")
+utils.load("boostFormula", "Shared.Items.BoostFormula")
+utils.load("gameConfig", "Shared.Core.GameConfig")
+utils.load("tapController", "Controllers.Game.TapController")
+utils.tapCounter = utils.modules.tapController.GetManualTapCount
+utils.syncTapCounter = false
+if type(debug.getupvalues) == "function" and type(debug.setupvalue) == "function" then
+    local success, upvalues = pcall(debug.getupvalues, utils.tapCounter)
+    utils.syncTapCounter = success and type(upvalues[1]) == "number" and upvalues[1] == utils.modules.tapController:GetManualTapCount()
+end
+
+function utils.tap()
+    if utils.syncTapCounter then
+        -- Keep manual UI clicks and script taps on the same server sequence.
+        local sequence = utils.modules.tapController:GetManualTapCount() + 1
+        debug.setupvalue(utils.tapCounter, 1, sequence)
+        utils.remote("Tap", "TapRequested", {Auto = false, Source = "button", ClientSequence = sequence})
+    else
+        utils.modules.tapController:Tap()
+        utils.identityReset()
+    end
+    return "Tapping"
+end
+
+function utils.rebirthIndex(data, affordable)
+    local maximum = utils.modules.buttons.GetOptionCount(data.Upgrades.RebirthButtons or 0, data.Progression.World)
+    local index = utils.settings.farm.Rebirth == "Maximum" and maximum or math.clamp(tonumber(utils.settings.farm.Rebirth) or maximum, 1, maximum)
+    if affordable then
+        for candidate = maximum, 1, -1 do
+            if data.Currencies.Coins >= utils.modules.rebirth.GetPrice(utils.modules.rebirth.GetAmountFromIndex(candidate), data.Statistics.Rebirths, utils.player) then return candidate end
+        end
+        return nil
+    end
+    return index
+end
+
+function utils.rebirth()
+    if utils.travel.Owner then return "Character busy" end
+    local data = utils.save()
+    local index = utils.rebirthIndex(data, false)
+    if not index then return "Waiting for coins" end
+    local price = utils.modules.rebirth.GetPrice(utils.modules.rebirth.GetAmountFromIndex(index), data.Statistics.Rebirths, utils.player)
+    if data.Currencies.Coins < price then return "Waiting for " .. utils.formatNumber(price) .. " coins" end
+    utils.remote("Rebirth", "RebirthRequested", {Index = index})
+    return "Requested x" .. utils.formatNumber(utils.modules.rebirth.GetAmountFromIndex(index))
+end
+
+function utils.eggAvailable(name, config, data)
+    return name ~= "Test" and config.Price and not config.Currency
+        and (not config.Island or data.Progression.UnlockedIslands[config.Island])
+        and (not config.Zone or config.Zone == "Spawn" or data.Progression.UnlockedZones[config.Zone])
+end
+
+function utils.pickEgg(data)
+    local selected = utils.settings.farm.Egg
+    local config = utils.modules.eggs[selected]
+    if config and utils.eggAvailable(selected, config, data) then return selected, config end
+end
+
+function utils.eggStandPosition(egg, root, humanoid)
+    local pivot = utils.position(egg)
+    local front = pivot:PointToWorldSpace(Vector3.new(4.32, 11.79, 3.98))
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {root.Parent, workspace.Eggs}
+    params.RespectCanCollide = true
+    local floor = workspace:Raycast(front + Vector3.new(0, 12, 0), Vector3.new(0, -60, 0), params)
+    if not floor or floor.Normal.Y < 0.6 then return end
+    local height = humanoid.HipHeight + root.Size.Y / 2
+    if humanoid.RigType == Enum.HumanoidRigType.R6 then
+        local leg = root.Parent:FindFirstChild("Left Leg")
+        height += leg and leg.Size.Y or 2
+    end
+    local position = Vector3.new(front.X, floor.Position.Y + height + 0.1, front.Z)
+    local facing = Vector3.new(pivot.Position.X, position.Y, pivot.Position.Z)
+    return CFrame.lookAt(position, facing)
+end
+
+function utils.hatchEgg()
+    local job = utils.jobs.Hatch
+    local generation = job.Generation
+    local function active() return runtime.Alive and job.Enabled and job.Generation == generation end
+    if not active() then return "Stopped" end
+    if utils.travel.Owner then return "Character busy" end
+    local display = utils.modules.eggController:GetForcedHatchDebugState()
+    if display.Queue > 0 or display.Worker or display.Busy then return "Hatch animation playing" end
+    if os.clock() < utils.hatch.NextAt then return string.format("Hatch cooldown: %.1fs", utils.hatch.NextAt - os.clock()) end
+    for sequence, pending in pairs(utils.hatch.Pending) do
+        if os.clock() - pending.At > 10 then utils.hatch.Pending[sequence] = nil; utils.hatch.Errors += 1 end
+    end
+    if utils.count(utils.hatch.Pending) >= 1 then return "Hatch request sent - awaiting server result" end
+    local data = utils.save()
+    local name, config = utils.pickEgg(data)
+    if not name then
+        local selected = utils.settings.farm.Egg
+        local selectedConfig = utils.modules.eggs[selected]
+        if not selectedConfig then return "Select an egg" end
+        if selectedConfig.Island and not data.Progression.UnlockedIslands[selectedConfig.Island] then return "Unlock " .. selectedConfig.Island end
+        if selectedConfig.Zone and selectedConfig.Zone ~= "Spawn" and not data.Progression.UnlockedZones[selectedConfig.Zone] then return "Unlock " .. selectedConfig.Zone end
+        return "Egg unavailable: " .. selected
+    end
+    local amount = utils.settings.farm.HatchCount
+    if amount > 3 and not utils.modules.perks.Has(data, "x8Egg") and not utils.modules.boostFormula.HasType(data, "OctoHatch") then amount = 3 end
+    amount = math.min(amount, data.Pets.StorageLimit - utils.count(data.Pets.Owned))
+    if amount < 1 then return "Storage full" end
+    while amount > 0 and utils.modules.pricing.GetTotal(data, name, config.Price, amount, utils.player) > data.Currencies.Coins - utils.settings.farm.Reserve do amount -= 1 end
+    if amount < 1 then
+        local price = utils.modules.pricing.GetTotal(data, name, config.Price, 1, utils.player)
+        local missing = price - (data.Currencies.Coins - utils.settings.farm.Reserve)
+        return "Not enough coins - need " .. utils.formatNumber(math.max(0, missing)) .. " more for " .. name
+    end
+    local root, humanoid = utils.character()
+    local egg = workspace.Eggs:FindFirstChild(name)
+    if not egg then
+        utils.travel.Owner, utils.travel.Origin = "Hatch", root.CFrame
+        local success, result = pcall(function()
+            utils.remote("Island", "Travel", {Island = config.Island or "Spawn", Source = "Menu"})
+            local deadline = os.clock() + 8
+            repeat task.wait(0.2); egg = workspace.Eggs:FindFirstChild(name) until egg or os.clock() >= deadline or not active()
+        end)
+        utils.travel.Owner, utils.travel.Origin = nil, nil
+        if not active() then return "Stopped" end
+        assert(success, tostring(result))
+        assert(egg, "Egg is not streamed: " .. name)
+    end
+    local eggPart = egg:FindFirstChild("Egg")
+    local center = utils.modules.eggIdle.GetPosition(egg) or (eggPart and eggPart:IsA("BasePart") and eggPart.Position) or utils.position(egg).Position
+    local inRange = (root.Position - center).Magnitude <= utils.modules.offlineHatch.ResumeRange + 6
+    if utils.hatch.LastEgg ~= name or not inRange then
+        local position = utils.eggStandPosition(egg, root, humanoid)
+        if not position then return "Ground in front of egg is not loaded" end
+        humanoid.Sit = false
+        humanoid.PlatformStand = false
+        root.CFrame = position
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        task.wait(0.4)
+        if utils.travel.Owner then return "Character busy" end
+    end
+    utils.hatch.LastEgg = name
+    if utils.travel.Owner then return "Character busy" end
+    if not active() then return "Stopped" end
+    utils.hatch.Sequence += 1
+    local sequence = utils.hatch.Sequence
+    utils.hatch.NextAt = os.clock() + 3.5
+    utils.hatch.Pending[sequence] = {At = os.clock(), Egg = name}
+    utils.remote("Egg", "EggHatchRequested", {Egg = name, Count = amount, Auto = true, Seq = sequence})
+    return "Opening " .. name
+end
+
+function utils.equip()
+    utils.remote("Pet", "PetActionRequested", {Action = "EquipBest", Mode = utils.settings.pets.Team})
+    return "Team requested"
+end
+
+function utils.sellPets()
+    local settings = utils.settings.pets
+    assert(next(settings.Rarities) and next(settings.Tiers) and next(settings.Names), "Select rarities, variants and pets to delete")
+    local function matches(pet)
+        local variant = pet.Tier == "Shiny" and "Rainbow" or pet.Tier or "Normal"
+        return (settings.Rarities["All Rarities"] or settings.Rarities[pet.Rarity])
+            and (settings.Tiers["All Variants"] or settings.Tiers[variant])
+            and (settings.Names["All Pets"] or settings.Names[pet.Name])
+    end
+    local ids = {}
+    for id, pet in pairs(utils.save().Pets.Owned) do
+        if matches(pet) and not utils.protected(id, pet, utils.save()) then table.insert(ids, id) end
+    end
+    local count = 0
+    for index = 1, #ids, 400 do
+        if not runtime.Alive or not utils.jobs.Cleanup.Enabled then break end
+        local batch = {}
+        for offset = index, math.min(index + 399, #ids) do
+            local pet = utils.save().Pets.Owned[ids[offset]]
+            if pet and matches(pet) and not utils.protected(ids[offset], pet, utils.save()) then table.insert(batch, ids[offset]) end
+        end
+        if #batch > 0 then
+            utils.remote("Pet", "PetActionRequested", {Action = "Delete", PetIds = batch})
+            count += #batch
+        end
+        if index + 400 <= #ids then task.wait(1.1) end
+    end
+    return utils.formatNumber(count) .. " deletion requests"
+end
+
+function utils.sortedRarities(rarities)
+    local names = utils.keys(rarities)
+    table.sort(names, function(a, b)
+        local first, second = utils.modules.rarity.GetRank(a), utils.modules.rarity.GetRank(b)
+        return first == second and a < b or first < second
+    end)
+    return names
+end
+
+function utils.sortedPetNames(pets)
+    local names = utils.keys(pets)
+    table.sort(names, function(a, b)
+        local first = utils.modules.launchPets[a] or utils.modules.catalog[a]
+        local second = utils.modules.launchPets[b] or utils.modules.catalog[b]
+        local firstRank = utils.modules.rarity.GetRank(first and first.Rarity or pets[a])
+        local secondRank = utils.modules.rarity.GetRank(second and second.Rarity or pets[b])
+        return firstRank == secondRank and a < b or firstRank < secondRank
+    end)
+    return names
+end
+
+function utils.inventoryPetNames()
+    local names = {}
+    for name in pairs(utils.modules.launchPets) do names[name] = "Common" end
+    for name, pet in pairs(utils.modules.catalog) do
+        if not names[name] then names[name] = type(pet) == "table" and (pet.Rarity or "Common") or "Common" end
+    end
+    local sorted = utils.sortedPetNames(names)
+    table.insert(sorted, 1, "All Pets")
+    return sorted
+end
+
+function utils.allEggDeleteOptions()
+    local names = {}
+    for eggName, config in pairs(utils.modules.eggs) do
+        if eggName ~= "Test" and type(config) == "table" then
+            for _, pets in ipairs({config.Pets or {}, config.Secrets or {}}) do
+                for name in pairs(pets) do names[name] = true end
             end
         end
     end
-    return true
+
+    local values, map = {}, {}
+    for _, name in ipairs(utils.sortedPetNames(names)) do
+        for _, tier in ipairs({"Normal", "Golden", "Diamond", "Shiny"}) do
+            local label = (tier == "Shiny" and "Rainbow" or tier) .. " " .. name
+            table.insert(values, label)
+            map[label] = utils.modules.rarity.AutoDeleteKey(name, tier)
+        end
+    end
+    return values, map
 end
 
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if not DigState.Running then continue end
-        processOneDigGame()
+utils.allDeleteValues, utils.allDeleteMap = utils.allEggDeleteOptions()
+
+function utils.refreshEggDelete()
+    local egg = utils.settings.farm.Egg
+    local config = utils.modules.eggs[egg]
+    local names, selected, rarityKeys = {}, {}, {}
+    for _, pets in ipairs({config and config.Pets or {}, config and config.Secrets or {}}) do
+        for name in pairs(pets) do names[name] = true end
     end
-    cancelDigSession()
-end)
 
-local ColosseumState = {
-    Active = false, Opponents = {},
-    AttackInterval = 0.15, CriticalInterval = 7,
-    Waves = 0, Status = "Idle",
-}
+    local entries = utils.save().Eggs.AutoDelete[egg] or {}
+    for _, name in ipairs(utils.sortedPetNames(names)) do
+        local pet = utils.modules.launchPets[name] or utils.modules.catalog[name]
+        local rarity = pet and pet.Rarity
+        if rarity then rarityKeys[rarity] = rarityKeys[rarity] or {} end
+        for _, tier in ipairs({"Normal", "Golden", "Diamond", "Shiny"}) do
+            local key = utils.modules.rarity.AutoDeleteKey(name, tier)
+            local label = (tier == "Shiny" and "Rainbow" or tier) .. " " .. name
+            if rarity then table.insert(rarityKeys[rarity], key) end
+            if table.find(entries, key) then table.insert(selected, label) end
+        end
+    end
 
-local ColosseumToggle
+    tabs.hatching.deleteMap = utils.allDeleteMap
+    tabs.hatching.deleteRarityKeys = rarityKeys
+    local selectedRarities = {}
+    for rarity, keys in pairs(rarityKeys) do
+        local all = #keys > 0
+        for _, key in ipairs(keys) do
+            if not table.find(entries, key) then all = false; break end
+        end
+        if all then table.insert(selectedRarities, rarity) end
+    end
+    table.sort(selectedRarities)
+    tabs.hatching.deleteRarities = selectedRarities
 
-ColosseumNetwork:BindEvents({
-    ["WaveDefenseOpponentSpawned"] = function(data)
-        if not ColosseumState.Active or not data or not data.Id then return end
-        ColosseumState.Opponents[data.Id] = {
-            Id = data.Id, ArrivalTime = data.ArrivalTime, SpawnTime = data.SpawnTime,
-            Health = data.Health or data.MaxHealth, MaxHealth = data.MaxHealth,
-        }
-    end,
-    ["WaveDefenseOpponentDefeated"] = function(data)
-        if not data or not data.OpponentId then return end
-        ColosseumState.Opponents[data.OpponentId] = nil
-    end,
-    ["WaveDefenseHeartLost"] = function(data)
-        if not data or not data.OpponentId then return end
-        ColosseumState.Opponents[data.OpponentId] = nil
-    end,
-    ["WaveDefenseWaveComplete"] = function()
-        ColosseumState.Waves = ColosseumState.Waves + 1
-        ColosseumState.Opponents = {}
-    end,
-    ["WaveDefenseGameOver"] = function()
-        if ColosseumState.Active then
-            ColosseumState.Active = false
-            ColosseumState.Status = "Game over"
-            if ColosseumToggle then
-                ColosseumToggle:Set(false)
+    if tabs.hatching.deleteDropdown then tabs.hatching.deleteDropdown:Set(selected) end
+    if tabs.hatching.rarityDropdown then tabs.hatching.rarityDropdown:Set(selectedRarities) end
+    return utils.allDeleteValues, selected
+end
+
+function utils.deleteEggRarities(values)
+    values = type(values) == "table" and values or selectedList(values)
+    local previous = tabs.hatching.deleteRarities or {}
+    local entries, changed = {}, false
+    local currentSelection = tabs.hatching.deleteDropdown and tabs.hatching.deleteDropdown.value or {}
+    for _, label in ipairs(selectedList(currentSelection)) do
+        local key = tabs.hatching.deleteMap[label]
+        if key then entries[key] = true end
+    end
+    for rarity, keys in pairs(tabs.hatching.deleteRarityKeys or {}) do
+        local enabled = containsValue(values, rarity)
+        if enabled ~= containsValue(previous, rarity) then
+            changed = true
+            for _, key in ipairs(keys) do entries[key] = enabled or nil end
+        end
+    end
+    tabs.hatching.deleteRarities = table.clone(values)
+    if not changed then return end
+
+    local selected = {}
+    for _, label in ipairs(utils.allDeleteValues) do
+        local key = tabs.hatching.deleteMap[label]
+        if key and entries[key] then
+            local belongsToEgg = false
+            for _, keys in pairs(tabs.hatching.deleteRarityKeys or {}) do
+                if table.find(keys, key) then belongsToEgg = true; break end
             end
-            task.spawn(function()
-                ColosseumNetwork:InvokeServer("ReturnFromArena")
-            end)
-        end
-    end,
-})
-
-local function colosseumPickTarget()
-    local targetId, minArrival = nil, math.huge
-    for id, opp in pairs(ColosseumState.Opponents) do
-        if opp.ArrivalTime and opp.ArrivalTime < minArrival then
-            minArrival = opp.ArrivalTime
-            targetId = id
+            if belongsToEgg then table.insert(selected, label) end
         end
     end
-    return targetId
+    if tabs.hatching.deleteDropdown then tabs.hatching.deleteDropdown:Set(selected) end
 end
 
-local function colosseumApplyResponse(targetId, resp)
-    if not resp or not resp.Health then return false end
-    if resp.Defeated then
-        ColosseumState.Opponents[targetId] = nil
-    elseif ColosseumState.Opponents[targetId] then
-        ColosseumState.Opponents[targetId].Health = resp.Health
-        if resp.NewArrivalTime then
-            ColosseumState.Opponents[targetId].ArrivalTime = resp.NewArrivalTime
+function utils.craftGroups(machine, data)
+    local config = utils.modules.machines[machine]
+    local key = machine == "Shiny" and "Rainbow" or machine
+    local selected = utils.settings.pets[key .. "Pets"]
+    local required = utils.settings.pets[key .. "Count"]
+    local groups, ready = {}, {}
+    for id, pet in pairs(data.Pets.Owned) do
+        if (selected["All Pets"] or selected[pet.Name]) and pet.Tier == config.SourceTier and not utils.protected(id, pet, data) then
+            local key = pet.Name .. "/" .. tostring(pet.Mutation or "")
+            groups[key] = groups[key] or {}
+            table.insert(groups[key], id)
         end
     end
-    return true
-end
-
-task.spawn(function()
-    while true do
-        task.wait(ColosseumState.AttackInterval)
-        if not ColosseumState.Active then continue end
-        local targetId = colosseumPickTarget()
-        if not targetId then continue end
-        local resp = ColosseumNetwork:InvokeServer("AttackOpponent", targetId)
-        colosseumApplyResponse(targetId, resp)
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(ColosseumState.CriticalInterval)
-        if not ColosseumState.Active then continue end
-        local targetId = colosseumPickTarget()
-        if not targetId then continue end
-        local resp = ColosseumNetwork:InvokeServer("CriticalAttackOpponent", targetId)
-        colosseumApplyResponse(targetId, resp)
-    end
-end)
-
-local function getColosseumArena()
-    local gameFolder = Workspace:FindFirstChild("Game")
-    if gameFolder then
-        local arena = gameFolder:FindFirstChild("WaveDefense")
-        if arena then return arena end
-    end
-    return Workspace:FindFirstChild("WaveDefense")
-end
-
-local function getColosseumArenaPos()
-    local arena = getColosseumArena()
-    if not arena then return nil end
-    local door = arena:FindFirstChild("Door")
-    if door then
-        local endCF = door:GetAttribute("EndCFrame")
-        if typeof(endCF) == "CFrame" then return endCF.Position end
-    end
-    local ok, cf = pcall(function() return arena:GetBoundingBox() end)
-    if ok and cf then return cf.Position end
-    return getPartPos(arena)
-end
-
-local function colosseumStart()
-    if ColosseumState.Active then return true end
-    ColosseumState.Status = "Teleporting to arena..."
-    ColosseumState.Opponents = {}
-    ColosseumState.Waves = 0
-    local arenaPos = getColosseumArenaPos()
-    if arenaPos then
-        TeleportTo(arenaPos)
-        task.wait(0.6)
-    end
-    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
-        ColosseumAdapter:SetActive(true)
-        task.wait(0.25)
-    end
-    ColosseumState.Status = "Starting wave defense..."
-    local resp = ColosseumNetwork:InvokeServer("StartWaveDefense")
-    if not resp then
-        ColosseumState.Status = "No response"
-        if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
-            ColosseumAdapter:SetActive(false)
-        end
-        return false, "No response"
-    end
-    if type(resp) == "table" and (resp.OnCooldown or resp.Error) then
-        local errMsg = tostring(resp.Error or "On cooldown")
-        if resp.Remaining then errMsg = errMsg .. " (" .. math.ceil(resp.Remaining / 60) .. "m)" end
-        ColosseumState.Status = errMsg
-        if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
-            ColosseumAdapter:SetActive(false)
-        end
-        return false, errMsg
-    end
-    ColosseumState.Active = true
-    ColosseumState.Status = "Playing"
-    if type(resp) == "table" and type(resp.PendingSpawns) == "table" then
-        for _, spawn in ipairs(resp.PendingSpawns) do
-            if type(spawn) == "table" and spawn.Id then
-                ColosseumState.Opponents[spawn.Id] = {
-                    Id = spawn.Id, ArrivalTime = spawn.ArrivalTime, SpawnTime = spawn.SpawnTime,
-                    Health = spawn.MaxHealth, MaxHealth = spawn.MaxHealth,
-                }
-            end
+    for _, ids in pairs(groups) do
+        table.sort(ids)
+        while #ids >= required do
+            local group = {}
+            for _ = 1, required do table.insert(group, table.remove(ids)) end
+            table.insert(ready, group)
         end
     end
-    return true
+    return ready
 end
 
-local function colosseumStop()
-    ColosseumState.Active = false
-    ColosseumState.Status = "Stopping..."
-    if ColosseumAdapter and type(ColosseumAdapter.SetActive) == "function" then
-        ColosseumAdapter:SetActive(false)
+function utils.machinePoint(machine)
+    local folder = workspace:FindFirstChild("InteractionPoints")
+    local point = folder and folder:FindFirstChild(machine)
+    if point then return point end
+    for _, instance in ipairs(services.CollectionService:GetTagged("InteractionPoint")) do
+        if instance.Name == machine and instance:IsDescendantOf(workspace) then return instance end
     end
-    task.spawn(function()
-        ColosseumNetwork:InvokeServer("EndWaveDefense")
-        task.wait(0.5)
-        ColosseumNetwork:InvokeServer("ReturnFromArena")
-        ColosseumState.Status = "Stopped"
+end
+
+function utils.craft(machine)
+    local data = utils.save()
+    if machine == "Diamond" and not data.Progression.UnlockedIslands["Crystal Cave"] then return "Unlock Crystal Cave" end
+    if machine == "Shiny" and not data.ShinyStars.Unlocked then return "Collect all Shiny Stars" end
+    local queue = (data.Machines.Shiny or {}).Queue or {}
+    for id, craft in pairs(queue) do
+        if (craft.EndTime or math.huge) <= workspace:GetServerTimeNow() then
+            utils.remote("Machine", "MachineCraftRequested", {Machine = "Shiny", Action = "Claim", CraftId = craft.Id or id})
+        end
+    end
+    if utils.settings.pets.CraftMode == "Storage" and utils.count(data.Pets.Owned) < math.floor(data.Pets.StorageLimit * 0.85) then return "Waiting for storage" end
+    local groups = utils.craftGroups(machine, data)
+    if #groups == 0 then return "Waiting for matching pets" end
+    return utils.trip(machine, utils.machinePoint(machine), function()
+        local count = 0
+        for _, ids in ipairs(groups) do
+            if not runtime.Alive or (utils.jobs[machine] and not utils.jobs[machine].Enabled) then break end
+            if machine == "Shiny" and count + utils.count(queue) >= utils.modules.machines.Shiny.MaxQueue then break end
+            utils.craftPending = (utils.craftPending or 0) + 1
+            utils.remote("Machine", "MachineCraftRequested", {Machine = machine, Action = machine == "Shiny" and "Start" or "Craft", PetIds = ids})
+            count += 1
+            task.wait(1)
+        end
+        return tostring(count) .. " craft requests"
     end)
 end
 
-local FarmTab = Window:CreateTab({ name = "Farm" })
-local PetsTab = Window:CreateTab({ name = "Pets" })
-local ChestsTab = Window:CreateTab({ name = "Chests" })
-local GamesTab = Window:CreateTab({ name = "Games" })
-local CraftTab = Window:CreateTab({ name = "Crafting" })
-
-FarmTab:CreateSection({ name = "Auto Tap" })
-FarmTab:CreateSlider({
-    name = "Tap Speed",
-    range = { 0, 0.5 },
-    increment = 0.01,
-    value = 0.01,
-    callback = function(v) TapState.Delay = v end,
-})
-FarmTab:CreateToggle({
-    name = "Auto Tap",
-    value = false,
-    flag = "autoTap",
-    callback = function(v) TapState.Running = v end,
-})
-
-FarmTab:CreateSection({ name = "Auto Rebirth" })
-local RebirthDropdown
-RebirthDropdown = FarmTab:CreateDropdown({
-    name = "Rebirth Amount",
-    options = RebirthOptions,
-    value = RebirthOptions[1],
-    callback = function(v) RebirthState.SelectedIndex = RebirthIndexByName[v[1]] or 1 end,
-})
-FarmTab:CreateButton({
-    name = "Refresh Rebirth List",
-    callback = function()
-        rebuildRebirthOptions()
-        if RebirthDropdown then
-            RebirthDropdown:Refresh(RebirthOptions)
-            local label = tostring(RebirthOptions[RebirthState.SelectedIndex] or RebirthOptions[1])
-            if RebirthIndexByName[label] then
-                RebirthDropdown:Set(label)
-            else
-                RebirthState.SelectedIndex = 1
-                RebirthDropdown:Set(RebirthOptions[1])
-            end
+function utils.skills()
+    local data = utils.save()
+    local pending = utils.skillPending
+    if pending then
+        if data.SkillTree.Unlocked[pending.Name] then
+            utils.skillPending = nil
+            return "Purchased " .. pending.Name
         end
-    end,
-})
-local RebirthSelectedToggle, RebirthHighestToggle
-RebirthSelectedToggle = FarmTab:CreateToggle({
-    name = "Buy Selected Rebirth",
-    value = false,
-    flag = "buySelectedRebirth",
-    callback = function(v)
-        RebirthState.Selected = v
-        if v and RebirthState.Highest then
-            RebirthState.Highest = false
-            RebirthHighestToggle:Set(false)
+        if not pending.Done then return "Waiting for " .. pending.Name end
+        utils.skillPending = nil
+        if not pending.Success then return tostring(pending.Result) end
+        if os.clock() - pending.At < 5 then
+            utils.skillPending = pending
+            return "Confirming " .. pending.Name
         end
-    end,
-})
-RebirthHighestToggle = FarmTab:CreateToggle({
-    name = "Buy Highest Rebirth",
-    value = false,
-    flag = "buyHighestRebirth",
-    callback = function(v)
-        RebirthState.Highest = v
-        if v and RebirthState.Selected then
-            RebirthState.Selected = false
-            RebirthSelectedToggle:Set(false)
-        end
-    end,
-})
-FarmTab:CreateSlider({
-    name = "Rebirth Delay",
-    range = { 0.5, 5 },
-    increment = 0.1,
-    value = 1,
-    callback = function(v) RebirthState.Delay = v end,
-})
-
-FarmTab:CreateSection({ name = "Auto Double Jump" })
-FarmTab:CreateToggle({
-    name = "Auto Buy Double Jumps",
-    value = false,
-    flag = "autoJump",
-    callback = function(v) JumpState.Running = v end,
-})
-FarmTab:CreateButton({
-    name = "Buy Once",
-    callback = function()
-        if attemptBuyJump() then
-            Notify({ title = "Double Jump", content = "Purchase requested", duration = 2 })
-        else
-            Notify({ title = "Double Jump", content = "Not enough funds or blocked", duration = 2 })
-        end
-    end,
-})
-FarmTab:CreateSlider({
-    name = "Jump Delay",
-    range = { 0.5, 5 },
-    increment = 0.1,
-    value = 1,
-    callback = function(v) JumpState.Delay = v end,
-})
-
-FarmTab:CreateSection({ name = "Auto Skill Tree" })
-FarmTab:CreateToggle({
-    name = "Auto Unlock Skills",
-    value = false,
-    flag = "autoSkillTree",
-    callback = function(v) SkillState.Running = v end,
-})
-FarmTab:CreateSlider({
-    name = "Skill Delay",
-    range = { 0.5, 5 },
-    increment = 0.1,
-    value = 1,
-    callback = function(v) SkillState.Delay = v end,
-})
-
-FarmTab:CreateSection({ name = "Auto Quests" })
-FarmTab:CreateToggle({
-    name = "Auto Claim Quests",
-    value = false,
-    flag = "autoQuest",
-    callback = function(v) QuestState.Running = v end,
-})
-FarmTab:CreateSlider({
-    name = "Claim Delay",
-    range = { 0.5, 5 },
-    increment = 0.1,
-    value = 1,
-    callback = function(v) QuestState.Delay = v end,
-})
-
-local FarmStatus = FarmTab:CreateText({ name = "Status", text = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        FarmStatus:Set(string.format(
-            "Tap: %d | Rebirth: %d | Jump: %d | Skills: %d | Quests: %d",
-            TapState.Count, RebirthState.Count, JumpState.Count, SkillState.Count, QuestState.Count
-        ))
+        return "Unlock not confirmed: " .. pending.Name
     end
-end)
-
-PetsTab:CreateSection({ name = "Auto Hatch" })
-local EggOptions = {}
-for eggName in pairs(EggConfig) do table.insert(EggOptions, eggName) end
-table.sort(EggOptions)
-HatchState.SelectedEgg = EggOptions[1]
-
-PetsTab:CreateDropdown({
-    name = "Select Egg",
-    options = EggOptions,
-    value = EggOptions[1],
-    callback = function(v) HatchState.SelectedEgg = v[1] end,
-})
-PetsTab:CreateDropdown({
-    name = "Hatch Amount",
-    options = { "1", "3", "8" },
-    value = "1",
-    callback = function(v) HatchState.SelectedAmount = tonumber(v[1]) or 1 end,
-})
-PetsTab:CreateToggle({
-    name = "Auto Hatch",
-    value = false,
-    flag = "autoHatch",
-    callback = function(v) HatchState.HatchRunning = v end,
-})
-PetsTab:CreateSlider({
-    name = "Hatch Delay",
-    range = { 0.1, 2 },
-    increment = 0.1,
-    value = 0.5,
-    callback = function(v) HatchState.HatchDelay = v end,
-})
-
-local BoostList = {}
-for name in pairs(BoostConfig.Definitions) do table.insert(BoostList, name) end
-table.sort(BoostList)
-local GiftsList = { "New Years Gift", "Valentines Gift", "St. Patrick Gift", "Release Gift" }
-local TreatsList = { "RegularTreat", "BagOfTreats", "ExoticShard", "ElectricShard", "SecretFruit", "DragonFruit", "GoldenApple", "RainbowStrawberry", "GoldenTreat" }
-local TotemsList = { "TotemOfLuck", "TotemOfRebirths", "TotemOfClicks", "TotemOfSecretLuck", "TotemOfHatchSpeed" }
-
-PetsTab:CreateSection({ name = "Auto Boosts" })
-PetsTab:CreateDropdown({
-    name = "Select Boosts",
-    options = BoostList,
-    multiSelect = true,
-    value = {},
-    callback = function(v) ItemState.SelectedBoosts = v end,
-})
-PetsTab:CreateToggle({
-    name = "Use Boosts",
-    value = false,
-    flag = "useBoosts",
-    callback = function(v) ItemState.BoostRunning = v end,
-})
-
-PetsTab:CreateSection({ name = "Auto Gifts" })
-PetsTab:CreateDropdown({
-    name = "Select Gifts",
-    options = GiftsList,
-    multiSelect = true,
-    value = {},
-    callback = function(v) ItemState.SelectedGifts = v end,
-})
-PetsTab:CreateToggle({
-    name = "Open Gifts",
-    value = false,
-    flag = "openGifts",
-    callback = function(v) ItemState.GiftRunning = v end,
-})
-
-PetsTab:CreateSection({ name = "Auto Treats" })
-PetsTab:CreateDropdown({
-    name = "Select Treats",
-    options = TreatsList,
-    multiSelect = true,
-    value = {},
-    callback = function(v) ItemState.SelectedTreats = v end,
-})
-PetsTab:CreateToggle({
-    name = "Feed Treats",
-    value = false,
-    flag = "feedTreats",
-    callback = function(v) ItemState.TreatRunning = v end,
-})
-
-PetsTab:CreateSection({ name = "Auto Totems" })
-PetsTab:CreateDropdown({
-    name = "Select Totems",
-    options = TotemsList,
-    multiSelect = true,
-    value = {},
-    callback = function(v) ItemState.SelectedTotems = v end,
-})
-PetsTab:CreateToggle({
-    name = "Place Totems",
-    value = false,
-    flag = "placeTotems",
-    callback = function(v) ItemState.TotemRunning = v end,
-})
-
-PetsTab:CreateSection({ name = "Item Timing" })
-PetsTab:CreateSlider({
-    name = "Item Delay",
-    range = { 0.5, 5 },
-    increment = 0.1,
-    value = 1,
-    callback = function(v) ItemState.Delay = v end,
-})
-
-local PetsStatus = PetsTab:CreateText({ name = "Status", text = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        PetsStatus:Set(string.format(
-            "Hatched: %d | Items used: %d | %s",
-            HatchState.Hatched, ItemState.Used, HatchState.Status
-        ))
-    end
-end)
-
-ChestsTab:CreateSection({ name = "Auto Tap Chest" })
-local TapChestCollectToggle, TapChestOpenToggle
-TapChestCollectToggle = ChestsTab:CreateToggle({
-    name = "Auto Collect Tap Chest",
-    value = false,
-    flag = "autoCollectTapChest",
-    callback = function(v)
-        TapChestState.CollectRunning = v
-        if v and TapChestState.OpenRunning then
-            TapChestState.OpenRunning = false
-            TapChestOpenToggle:Set(false)
-        end
-    end,
-})
-TapChestOpenToggle = ChestsTab:CreateToggle({
-    name = "Auto Open Tap Chest",
-    value = false,
-    flag = "autoOpenTapChest",
-    callback = function(v)
-        TapChestState.OpenRunning = v
-        if v and TapChestState.CollectRunning then
-            TapChestState.CollectRunning = false
-            TapChestCollectToggle:Set(false)
-        end
-    end,
-})
-ChestsTab:CreateSlider({
-    name = "Chest Delay",
-    range = { 0.1, 3 },
-    increment = 0.1,
-    value = 0.5,
-    callback = function(v) TapChestState.Delay = v end,
-})
-
-ChestsTab:CreateSection({ name = "Auto Clicker Chest" })
-ChestsTab:CreateToggle({
-    name = "Auto Teleport to Clicker Chest",
-    value = false,
-    flag = "autoClickerChest",
-    callback = function(v)
-        ClickerState.Running = v
-        if v then ClickerState.Current = getClickerChest() end
-    end,
-})
-ChestsTab:CreateSlider({
-    name = "Check Delay",
-    range = { 0.1, 3 },
-    increment = 0.1,
-    value = 0.5,
-    callback = function(v) ClickerState.Delay = v end,
-})
-
-local ChestsStatus = ChestsTab:CreateText({ name = "Status", text = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        ChestsStatus:Set(string.format(
-            "Collected: %d | Opened: %d | Failed: %d | %s",
-            TapChestState.Collected, TapChestState.Opened, TapChestState.Failed, TapChestState.Status
-        ))
-    end
-end)
-
-GamesTab:CreateSection({ name = "Auto Dig Perfect" })
-GamesTab:CreateToggle({
-    name = "Auto Dig Perfect",
-    value = false,
-    flag = "autoDigPerfect",
-    callback = function(v)
-        DigState.Running = v
-        if not v then cancelDigSession() end
-        if v then
-            DigState.Status = "Starting..."
-            Notify({title = "Auto Dig", content = "Starting", duration = 2})
-        end
-    end,
-})
-GamesTab:CreateButton({
-    name = "Cancel Current Session",
-    callback = function()
-        cancelDigSession()
-        DigState.Status = "Session cancelled"
-    end,
-})
-GamesTab:CreateButton({
-    name = "Reset Dig Stats",
-    callback = function()
-        DigState.TotalHits = 0
-        DigState.TotalGames = 0
-        DigState.LastReward = nil
-        DigState.Status = "Stats reset"
-    end,
-})
-
-GamesTab:CreateSection({ name = "Auto Colosseum" })
-ColosseumToggle = GamesTab:CreateToggle({
-    name = "Auto Colosseum",
-    value = false,
-    flag = "autoColosseum",
-    callback = function(v)
-        if v then
-            local ok, err = colosseumStart()
-            if not ok then
-                ColosseumToggle:Set(false)
-                Notify({
-                    title = "Colosseum",
-                    content = "Cannot start: " .. tostring(err or "unknown"),
-                    duration = 5,
-                })
-            end
-        else
-            colosseumStop()
-        end
-    end,
-})
-GamesTab:CreateSlider({
-    name = "Attack Interval",
-    range = { 0.05, 1 },
-    increment = 0.01,
-    value = 0.15,
-    callback = function(v) ColosseumState.AttackInterval = v end,
-})
-GamesTab:CreateSlider({
-    name = "Critical Interval",
-    range = { 3, 15 },
-    increment = 0.5,
-    value = 7,
-    callback = function(v) ColosseumState.CriticalInterval = v end,
-})
-GamesTab:CreateText({
-    name = "Note",
-    text = "Opponent models may not appear since auto-start skips the client intro. Combat and rewards work normally.",
-})
-
-local GamesStatus = GamesTab:CreateText({ name = "Status", text = "Idle" })
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        GamesStatus:Set(string.format(
-            "Dig: %s (%d hits, %d games) | Colosseum: %d waves, %s",
-            DigState.Status, DigState.TotalHits, DigState.TotalGames,
-            ColosseumState.Waves, ColosseumState.Status
-        ))
-    end
-end)
-
-CraftTab:CreateSection({ name = "Auto Craft Golden Pets" })
-
-local CraftPetsOptions = {}
-for i, chance in ipairs(MachineConfig.Golden.Chances) do
-    table.insert(CraftPetsOptions, string.format("%d Pets (%d%%)", i, chance))
-end
-CraftTab:CreateDropdown({
-    name = "Pets to Use",
-    options = CraftPetsOptions,
-    value = CraftPetsOptions[6],
-    callback = function(v)
-        local n = tonumber(string.match(v[1], "%d+"))
-        if n then CraftState.PetsToUse = n end
-    end,
-})
-
-local function getMutationOptions()
-    local set = { ["None"] = true }
-    local data = getData()
-    if data and data.Pets and data.Pets.Owned then
-        for _, pet in pairs(data.Pets.Owned) do
-            if type(pet.Mutation) == "string" and pet.Mutation ~= "" then
-                set[pet.Mutation] = true
-            end
+    local candidates = {}
+    for name, node in pairs(utils.modules.skills.Nodes) do
+        local available = not node.Data.RequiredIsland or data.Progression.UnlockedIslands[node.Data.RequiredIsland]
+        if available and not data.SkillTree.Unlocked[name] and (not node.Parent or data.SkillTree.Unlocked[node.Parent]) then
+            local price = utils.modules.skills.GetPrice(data, name)
+            local currency = node.Data.Currency or "Gems"
+            local reserve = currency == "Gems" and utils.settings.boosts.Reserve or 0
+            if price <= (data.Currencies[currency] or 0) - reserve then table.insert(candidates, {Name = name, Price = price}) end
         end
     end
-    local list = {}
-    for name in pairs(set) do table.insert(list, name) end
-    table.sort(list)
-    return list
+    table.sort(candidates, function(a, b) return a.Price == b.Price and a.Name < b.Name or a.Price < b.Price end)
+    local node = candidates[1]
+    if not node then return "Waiting for affordable unlocked skills" end
+    pending = {Name = node.Name, At = os.clock(), Done = false}
+    utils.skillPending = pending
+    runtime:Spawn(function()
+        pending.Success, pending.Result = pcall(utils.remote, "SkillTree", "Unlock", {Name = node.Name})
+        utils.identityReset()
+        pending.Done = true
+    end)
+    return "Buying " .. node.Name
 end
 
-local CraftMutationDropdown
-CraftMutationDropdown = CraftTab:CreateDropdown({
-    name = "Filter Mutation",
-    options = getMutationOptions(),
-    value = "None",
-    callback = function(v) CraftState.SelectedMutation = v[1] end,
-})
-CraftTab:CreateButton({
-    name = "Refresh Mutations",
-    callback = function()
-        local opts = getMutationOptions()
-        if CraftMutationDropdown then
-            CraftMutationDropdown:Refresh(opts)
-            if not table.find(opts, CraftState.SelectedMutation) then
-                CraftState.SelectedMutation = "None"
-                CraftMutationDropdown:Set("None")
-            end
-        end
-    end,
-})
-CraftTab:CreateToggle({
-    name = "Auto Craft Golden Pets",
-    value = false,
-    flag = "autoCraftGolden",
-    callback = function(v) CraftState.GoldenRunning = v end,
-})
-
-CraftTab:CreateSection({ name = "Auto Honey Pot" })
-
-local HoneyPotRecipeOptions = { "Auto" }
-local HoneyPotRecipeKeyByLabel = {}
-local seen = {}
-for i, recipe in ipairs(HoneyPotConfig.Recipes) do
-    local output = HoneyPotConfig.Describe(recipe.Output)
-    local base = (output and output.Name) or recipe.Key
-    local label = base
-    if seen[base] then label = base .. " #" .. i end
-    seen[base] = true
-    HoneyPotRecipeKeyByLabel[label] = recipe.Key
-    table.insert(HoneyPotRecipeOptions, label)
+function utils.islands()
+    local data, island = utils.save(), nil
+    for _, candidate in ipairs(utils.sortedIslands()) do
+        if not data.Progression.UnlockedIslands[candidate.Name] then island = candidate; break end
+    end
+    if not island then return "All islands unlocked" end
+    if data.Currencies.Coins < island.Config.Price then return "Saving for " .. island.Name end
+    local portal = utils.islandPortal(island.Name)
+    if not portal then
+        utils.remote("Island", "Travel", {Island = data.Progression.Island or "Spawn", Source = "Menu"})
+        task.wait(0.5)
+        portal = utils.islandPortal(island.Name)
+    end
+    assert(portal, "Portal is not streamed: " .. island.Name)
+    return utils.trip("Islands", portal.CFrame * CFrame.new(0, 0, 5), function()
+        utils.remote("Island", "IslandUnlockRequested", {Action = "Purchase", Island = island.Name})
+        local deadline = os.clock() + 4
+        repeat task.wait(0.1) until data.Progression.UnlockedIslands[island.Name] or os.clock() >= deadline or not runtime.Alive
+        return data.Progression.UnlockedIslands[island.Name] and ("Unlocked " .. island.Name) or ("Requested " .. island.Name)
+    end)
 end
 
-CraftTab:CreateDropdown({
-    name = "Honey Pot Recipe",
-    options = HoneyPotRecipeOptions,
-    value = "Auto",
-    callback = function(v)
-        if v[1] == "Auto" then
-            HoneyPotState.SelectedRecipe = "Auto"
-        else
-            HoneyPotState.SelectedRecipe = HoneyPotRecipeKeyByLabel[v[1]] or "Auto"
+function utils.islandPortal(name)
+    local candidates = {}
+    local nextPortals = workspace:FindFirstChild("NextPortals")
+    if nextPortals then table.insert(candidates, nextPortals:FindFirstChild(name)) end
+    local portals = workspace:FindFirstChild("Portals")
+    local hub = portals and portals:FindFirstChild("Portals")
+    local config = utils.modules.islands.Islands[name]
+    if hub and config then table.insert(candidates, hub:FindFirstChild(config.PortalName)) end
+    for _, model in ipairs(candidates) do
+        if model then
+            local part = model:FindFirstChild("Portal_Hitbox", true) or model:FindFirstChild("Portal", true)
+            if part and part:IsA("BasePart") then return part end
         end
-    end,
-})
-CraftTab:CreateToggle({
-    name = "Auto Claim",
-    value = false,
-    flag = "autoClaimHoneyPot",
-    callback = function(v) HoneyPotState.ClaimRunning = v end,
-})
-CraftTab:CreateToggle({
-    name = "Auto Craft",
-    value = false,
-    flag = "autoCraftHoneyPot",
-    callback = function(v) HoneyPotState.CraftRunning = v end,
-})
-CraftTab:CreateToggle({
-    name = "Auto Teleport to Machine",
-    value = true,
-    flag = "autoTeleportHoneyPot",
-    callback = function(v) HoneyPotState.AutoTeleport = v end,
-})
-CraftTab:CreateSlider({
-    name = "Craft Amount",
-    range = { 1, 50 },
-    increment = 1,
-    value = 1,
-    callback = function(v) HoneyPotState.CraftAmount = v end,
-})
-CraftTab:CreateSlider({
-    name = "Action Delay",
-    range = { 0.3, 3 },
-    increment = 0.1,
-    value = 0.5,
-    callback = function(v) HoneyPotState.Delay = v end,
-})
+    end
+end
 
-local CraftStatus = CraftTab:CreateText({ name = "Status", text = "Idle" })
-task.spawn(function()
-    while true do
+function utils.memoryChoice(state, first)
+    local known = utils.memory.Known
+    for index, card in ipairs(state.Cards or {}) do if card.Pet then known[index] = card.Pet end end
+    if first then
+        for index, card in ipairs(state.Cards) do
+            if index ~= first and not card.Matched and known[index] == known[first] then return index end
+        end
+    else
+        for index, card in ipairs(state.Cards) do
+            if not card.Matched and known[index] then
+                for other, row in ipairs(state.Cards) do if index ~= other and not row.Matched and known[other] == known[index] then return index end end
+            end
+        end
+    end
+    for index, card in ipairs(state.Cards) do if index ~= first and not card.Matched and not known[index] then return index end end
+    for index, card in ipairs(state.Cards) do if index ~= first and not card.Matched then return index end end
+end
+
+function utils.memoryGame()
+    return utils.trip("Memory", utils.modules.memoryWorld.GetPad(), function()
+        local state = utils.remote("MemoryMatch", "Open", false)
+        if state.Outcome ~= "Playing" then
+            if (utils.save().MemoryMatch.NextPlay or 0) > workspace:GetServerTimeNow() then return "On cooldown" end
+            state = utils.remote("MemoryMatch", "Open", true)
+        end
+        assert(state and state.Id, "No memory session")
+        if state.Id ~= utils.memory.Id then utils.memory.Id = state.Id; table.clear(utils.memory.Known) end
+        local deadline = os.clock() + 150
+        local first
+        local visible = {}
+        for index, card in ipairs(state.Cards or {}) do if card.Pet and not card.Matched then table.insert(visible, index) end end
+        if #visible == 1 and (state.UnlockAt or 0) == 0 then first = visible[1] end
+        while runtime.Alive and utils.jobs.Memory.Enabled and state.Outcome == "Playing" and os.clock() < deadline do
+            local delay = math.max(0.2, (state.UnlockAt or 0) - workspace:GetServerTimeNow() + 0.1)
+            task.wait(delay)
+            if not utils.jobs.Memory.Enabled then break end
+            local choice = utils.memoryChoice(state, first)
+            if not choice then break end
+            state = utils.remote("MemoryMatch", "Flip", state.Id, choice)
+            assert(state and state.Cards, "Missing card result")
+            for index, card in ipairs(state.Cards) do if card.Pet then utils.memory.Known[index] = card.Pet end end
+            first = first and nil or choice
+            if (state.UnlockAt or 0) > 0 then first = nil end
+            utils.message("Memory", tostring(state.Pairs or 0) .. "/6 pairs")
+        end
+        if state.Outcome ~= "Playing" then utils.memory.Id = nil end
+        return state.Outcome or "Paused"
+    end)
+end
+
+function utils.digGame()
+    local allowance = utils.modules.dig.Allowance(utils.save().Digging, workspace:GetServerTimeNow())
+    if allowance <= 0 then return "Hourly limit reached" end
+    local site = utils.modules.digWorld.GetSite()
+    local zone = site and site:FindFirstChild("DigZone")
+    if not utils.save().Progression.UnlockedIslands.Autumn then return "Unlock Autumn" end
+    return utils.trip("Dig", zone, function()
+        local state = utils.remote("Dig", "Begin")
+        local deadline = os.clock() + utils.modules.dig.SessionTimeout
+        while runtime.Alive and utils.jobs.Dig.Enabled and state and state.Round and not state.Complete and os.clock() < deadline do
+            local round = state.Round
+            local target, best = nil, math.huge
+            local now = workspace:GetServerTimeNow() + 0.2
+            for step = 0, 400 do
+                local at = now + step * 0.005
+                local error = math.abs(utils.modules.dig.Cursor(round, at) - round.Center)
+                if error < best then target, best = at, error end
+                if error < 0.003 then break end
+            end
+            while runtime.Alive and utils.jobs.Dig.Enabled and workspace:GetServerTimeNow() < target do task.wait(0.01) end
+            if not utils.jobs.Dig.Enabled then break end
+            state = utils.remote("Dig", "Hit", state.Id, round.Sequence, target)
+            utils.message("Dig", state.Complete and "Complete" or "Digging")
+        end
+        if state and state.Complete then return "Complete" end
+        pcall(utils.remote, "Dig", "Cancel")
+        return "Paused"
+    end)
+end
+
+function utils.arenaReward()
+    local data = utils.save().Colosseum
+    local pending = data.PendingReward
+    if not pending then return "No pending reward" end
+    local old, new = data.Relic, pending.NewRelic
+    local score = function(relic)
+        local value = 0
+        for _, boost in ipairs(relic and relic.Boosts or {}) do value += tonumber(boost.Value) or 0 end
+        return value
+    end
+    return utils.remote("Colosseum", "ClaimMinigameReward", score(new) > score(old) and "replace" or "keep")
+end
+
+function utils.colosseum()
+    if utils.save().Colosseum.PendingReward then utils.arenaReward() end
+    local lastRun = utils.save().Colosseum.Cooldown or 0
+    if lastRun > 0 and lastRun + 1800 > workspace:GetServerTimeNow() then return "On cooldown" end
+    return utils.trip("Arena", utils.machinePoint("Colosseum"), function()
+        table.clear(utils.arena.Opponents)
+        local result = utils.remote("Colosseum", "StartWaveDefense")
+        assert(type(result) == "table" and not result.OnCooldown, "Arena unavailable")
+        utils.arena.Active = true
+        local deadline = os.clock() + 900
+        while runtime.Alive and utils.jobs.Arena.Enabled and utils.arena.Active and os.clock() < deadline do
+            for id in pairs(utils.arena.Opponents) do
+                local response = utils.remote("Colosseum", "AttackOpponent", id)
+                if response and response.Health and response.Health <= 0 then utils.arena.Opponents[id] = nil end
+                task.wait(0.1)
+                if not utils.jobs.Arena.Enabled then break end
+            end
+            task.wait(0.1)
+        end
+        if utils.arena.Active then pcall(utils.remote, "Colosseum", "EndWaveDefense") end
+        utils.arena.Active = false
         task.wait(0.5)
-        CraftStatus:Set(string.format(
-            "Golden: %d (%s) | Honey Pot: %d claimed, %d crafted | %s",
-            CraftState.GoldenCrafted, CraftState.Status, HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Status
-        ))
+        utils.arenaReward()
+        pcall(utils.remote, "Colosseum", "ReturnFromArena")
+        return "Wave " .. tostring(utils.save().Colosseum.BestWave or 0)
+    end)
+end
+
+function utils.feed()
+    local data = utils.save()
+    if not utils.modules.levels.LevelingUnlocked(data) then return "Pet leveling is locked" end
+    for _, id in ipairs(data.Pets.Equipped) do
+        local pet = data.Pets.Owned[id]
+        if pet and (pet.Level or 1) < utils.modules.levels.GetMaxLevel(pet.Rarity) then
+            for _, name in ipairs({"RegularTreat", "BagOfTreats"}) do
+                if (data.Items.Owned[name] or 0) > 0 then
+                    utils.remote("Item", "UseOnPet", {Item = name, PetId = id, Amount = 1})
+                    return "Fed " .. pet.Name
+                end
+            end
+        end
+    end
+    return "No treats or eligible team pets"
+end
+
+function utils.potions()
+    local data = utils.save()
+    for _, name in ipairs(utils.keys(utils.modules.boosts.Definitions)) do
+        local config = utils.modules.boosts.Definitions[name]
+        if utils.settings.boosts.Types[config.Type] and (data.Boosts[name] or 0) > 0 and not utils.modules.boostFormula.HasType(data, config.Type) then
+            utils.remote("Boost", "Use", name)
+            return "Used " .. name
+        end
+    end
+    return "Boosts active or potions unavailable"
+end
+
+function utils.potionMachine()
+    local data = utils.save()
+    if data.Currencies.Gems <= utils.settings.boosts.Reserve then return "Gem reserve reached" end
+    return utils.trip("Potions", workspace.Map1:FindFirstChild("PotionMachine"), function()
+        local slots = utils.save().PotionMachine.Slots or {}
+        local now = workspace:GetServerTimeNow()
+        for index, slot in pairs(slots) do
+            if (slot.ReadyAt or slot.FinishAt or math.huge) <= now then utils.remote("PotionMachine", "Claim", tonumber(index) or index) end
+        end
+        local cost = utils.modules.brew.GetPrice(utils.save().Statistics.Rebirths)
+        for slot = 1, utils.modules.brew.SlotCount do
+            if not slots[tostring(slot)] and utils.save().Currencies.Gems - cost >= utils.settings.boosts.Reserve then
+                utils.remote("PotionMachine", "Brew", utils.settings.boosts.Brew, slot)
+                task.wait(0.25)
+            end
+        end
+        for _, recipe in ipairs(utils.modules.recipes.Recipes) do
+            local amount = math.floor((utils.save().Boosts[recipe.Input] or 0) / recipe.Required)
+            if amount > 0 then utils.remote("PotionMachine", "Craft", recipe.Output, amount) end
+        end
+        return "Machine checked"
+    end)
+end
+
+function utils.totems()
+    local data = utils.save()
+    local root = utils.character()
+    local active = utils.remote("Item", "GetActiveTotems") or {}
+    for _, name in ipairs({"TotemOfHatchSpeed", "TotemOfLuck", "TotemOfSecretLuck", "TotemOfClicks", "TotemOfRebirths"}) do
+        if (data.Items.Owned[name] or 0) > 0 then
+            local placed = false
+            for _, totem in pairs(active.Totems or active) do
+                if type(totem) == "table" and totem.TotemName == name and (totem.ExpiresAt or 0) > workspace:GetServerTimeNow() then placed = true end
+            end
+            if not placed then
+                utils.remote("Item", "PlaceTotem", {TotemName = name, Position = root.Position})
+                return "Placed " .. name
+            end
+        end
+    end
+    return "No unused totems"
+end
+
+function utils.relic()
+    local data, selected, best = utils.save(), nil, -math.huge
+    for name, owned in pairs(data.Mastery.RelicInventory or {}) do
+        if owned and utils.modules.relics.Relics[name] then
+            local score = 0
+            for _, boost in ipairs(utils.modules.relics.Relics[name].Boosts) do score += boost.Value end
+            if utils.settings.boosts.Relic == name then selected = name; break end
+            if utils.settings.boosts.Relic == "Automatic" and score > best then selected, best = name, score end
+        end
+    end
+    if not selected then return "No selected relic owned" end
+    if selected ~= data.Mastery.EquippedRelic then utils.remote("Mastery", "EquipRelic", selected) end
+    return selected
+end
+
+function utils.enchantTargets(data)
+    local targets = {}
+    local selected = utils.settings.enchant.Pets or {}
+    if selected["Equipped Pets"] then
+        for _, id in pairs(data.Pets.Equipped or {}) do
+            if data.Pets.Owned[id] then targets[id] = true end
+        end
+    end
+    if selected["All Owned Pets"] then
+        for id in pairs(data.Pets.Owned or {}) do targets[id] = true end
+    end
+    for label in pairs(selected) do
+        local descriptor = utils.enchantPetMap and utils.enchantPetMap[label]
+        if descriptor then
+            for id, pet in pairs(data.Pets.Owned or {}) do
+                local tier = pet.Tier == "Shiny" and "Rainbow" or pet.Tier or "Normal"
+                if pet.Name == descriptor.Name and tier == descriptor.Tier and (pet.Rarity or "Common") == descriptor.Rarity then
+                    targets[id] = true
+                end
+            end
+        end
+    end
+    return targets
+end
+
+function utils.enchant()
+    assert(next(utils.settings.enchant.Traits), "Select target traits")
+    local data = utils.save()
+    local targets = utils.enchantTargets(data)
+    local pending = data.Enchanting.Pending
+    if pending then
+        if not targets[pending.PetId] then return "Finish the pending enchant first" end
+        local success, result = pcall(utils.remote, "Enchant", "Resolve", {Token = pending.Token, UseNew = true})
+        if not success and tostring(result):find("PetChangedChooseKeep", 1, true) then
+            utils.remote("Enchant", "Resolve", {Token = pending.Token, UseNew = false})
+        elseif not success then error(result, 0) end
+        return "Pending enchant resolved"
+    end
+    for id in pairs(targets) do
+        local pet = data.Pets.Owned[id]
+        if pet and not utils.modules.enchants.AutoMatch(utils.settings.enchant.Traits, pet.Enchant, pet.Enchant2) then
+            for slot = 1, utils.modules.enchants.GetSlotCount(pet) do
+                local current = pet.Enchant
+                if slot == 2 then current = pet.Enchant2 end
+                if not utils.modules.enchants.IsProtected(current) then
+                    local price = utils.modules.enchants.GetRollPrice(pet)
+                    if data.Currencies.Gems < price * utils.settings.enchant.Reserve then return "Waiting for enchant reserve" end
+                    local point = utils.machinePoint("Enchanting") or utils.machinePoint("Enchant")
+                    return utils.trip("Enchant", point, function()
+                        local currentData = utils.save()
+                        local currentPet = currentData.Pets.Owned[id]
+                        if not utils.jobs.Enchant.Enabled or not utils.enchantTargets(currentData)[id] or not currentPet then return "Pet selection changed" end
+                        if utils.modules.enchants.AutoMatch(utils.settings.enchant.Traits, currentPet.Enchant, currentPet.Enchant2) then return "Pet already matched" end
+                        local currentEnchant = currentPet.Enchant
+                        if slot == 2 then currentEnchant = currentPet.Enchant2 end
+                        if utils.modules.enchants.IsProtected(currentEnchant) then return "Enchant protected" end
+                        local result = utils.remote("Enchant", "Enchant", {PetId = id, Slot = slot, RequestId = services.HttpService:GenerateGUID(false)})
+                        local pending = result and result.Pending
+                        assert(pending and pending.Token, "No pending enchant token")
+                        utils.remote("Enchant", "Resolve", {Token = pending.Token, UseNew = true})
+                        return "Rolled " .. pet.Name
+                    end)
+                end
+            end
+        end
+    end
+    return "Team matched or protected"
+end
+
+function utils.shrine()
+    if utils.player:GetAttribute("ShrineBlessing") == utils.settings.boosts.Shrine then return utils.settings.boosts.Shrine end
+    if not utils.modules.shrineVisuals then utils.load("shrineVisuals", "Modules.Client.Game.ShrineVisuals") end
+    local position = utils.modules.shrineVisuals.GetCrystalPosition()
+    assert(position, "Shrine is not streamed")
+    return utils.trip("Shrine", CFrame.new(position), function()
+        utils.remote("Shrine", "Choose", utils.settings.boosts.Shrine)
+        return utils.settings.boosts.Shrine
+    end)
+end
+
+function utils.collectStars()
+    local data = utils.save()
+    if data.ShinyStars.Unlocked then return "All stars found" end
+    for _, config in ipairs(utils.modules.stars.Stars) do
+        if not data.ShinyStars.Found[config.Id] and (config.Island == "Spawn" or data.Progression.UnlockedIslands[config.Island]) then
+            local model = workspace.ShinyStars:FindFirstChild(config.Id)
+            if model then
+                local center = model:GetAttribute("ShinyStarCenter")
+                return utils.trip("Stars", typeof(center) == "Vector3" and CFrame.new(center) or model, function()
+                    utils.remote("ShinyStar", "Collect", config.Id)
+                    return "Collected " .. config.Id
+                end)
+            end
+        end
+    end
+    return "Unlock more islands"
+end
+
+function utils.rewards()
+    local data, count = utils.save(), 0
+    for id, quest in pairs(data.Quests) do
+        if quest.Completed and not quest.Claimed then utils.remote("Quest", "ClaimQuest", id); count += 1 end
+    end
+    utils.remote("PetIndex", "ClaimAllRequested")
+    if data.Offline.Pending then utils.remote("OfflineRewards", "Claim"); count += 1 end
+    local result = utils.remote("Leaderboard", "GetPendingRewards")
+    for _, reward in pairs(type(result) == "table" and (result.Rewards or result) or {}) do
+        if type(reward) == "table" and reward.Id then utils.remote("Leaderboard", "ClaimReward", reward.Id); count += 1 end
+    end
+    return tostring(count) .. " rewards checked"
+end
+
+function utils.bind(group, event, callback)
+    local folder = services.ReplicatedStorage.RemoteServices:FindFirstChild(group .. "Service")
+    local remote = folder and folder:FindFirstChild("RE") and folder.RE:FindFirstChild(event)
+    if remote then runtime:Connect(remote.OnClientEvent, callback) end
+end
+
+utils.bind("Tap", "TapResult", function(packet)
+    if type(packet) == "table" and type(packet.Combo) == "table" then
+        utils.clickCombo = tonumber(packet.Combo.Multiplier) or 1
     end
 end)
+utils.bind("Machine", "MachineCraftResult", function()
+    if (utils.craftPending or 0) <= 0 then return end
+    utils.craftPending -= 1
+    runtime:Spawn(function()
+        task.wait(0.2)
+        if not utils.travel.Owner and utils.jobs.Hatch.Enabled then utils.closeCraftMenus() end
+    end)
+end)
 
-Notify({
-    title = "Tap Simulator REBORN",
-    content = "Loaded. Toggle anything to start.",
-    duration = 5,
+utils.bind("Egg", "EggHatchResult", function(packet)
+    if type(packet) ~= "table" or not utils.hatch.Pending[packet.Seq] then return end
+    local sentAt = utils.hatch.Pending[packet.Seq].At
+    utils.hatch.Pending[packet.Seq] = nil
+    if packet.Success then
+        utils.hatch.NextAt = math.max(os.clock() + 0.2, sentAt + math.max(0.5, 3.5 / (tonumber(packet.Speed) or 1)))
+        utils.hatch.Count += #(packet.Pets or {})
+        utils.message("Hatch", packet.Egg .. " | " .. utils.formatNumber(utils.hatch.Count) .. " pets")
+    else
+        utils.hatch.NextAt = os.clock() + 4
+        utils.hatch.Errors += 1
+        utils.message("Hatch", packet.Error or packet.Reason or "Rejected")
+    end
+end)
+utils.bind("Colosseum", "WaveDefenseOpponentSpawned", function(packet)
+    if utils.arena.Active and packet and packet.Id then utils.arena.Opponents[packet.Id] = packet end
+end)
+utils.bind("Colosseum", "WaveDefenseOpponentDefeated", function(packet)
+    if packet then utils.arena.Opponents[packet.OpponentId] = nil end
+end)
+utils.bind("Colosseum", "WaveDefenseWaveStarting", function(packet)
+    utils.arena.Wave = type(packet) == "table" and (packet.Wave or packet.WaveNumber or 0) or tonumber(packet) or 0
+    utils.message("Arena", "Wave " .. tostring(utils.arena.Wave))
+end)
+utils.bind("Colosseum", "WaveDefenseGameOver", function() utils.arena.Active = false end)
+utils.bind("LuckyDucky", "Spawn", function(packet)
+    if utils.jobs.Rewards and utils.jobs.Rewards.Enabled and packet and packet.Id then pcall(utils.remote, "LuckyDucky", "Claim", packet.Id) end
+end)
+for _, group in ipairs({"Machine", "Pet", "Rebirth", "Island"}) do
+    local event = ({Machine = "MachineCraftResult", Pet = "PetActionResult", Rebirth = "RebirthResult", Island = "IslandUnlockResult"})[group]
+    utils.bind(group, event, function(packet)
+        if type(packet) == "table" and (packet.Success == false or packet.Error) then utils.message(group, packet.Error or packet.Reason or "Rejected") end
+    end)
+end
+
+utils.load("chests", "Shared.Game.TapChestConfig")
+function utils.chestModel(id)
+    for _, model in ipairs(services.CollectionService:GetTagged(utils.modules.chests.Tag)) do
+        if model:IsDescendantOf(workspace) and model:GetAttribute(utils.modules.chests.Attributes.Id) == id then return model end
+    end
+end
+
+function utils.chests()
+    if utils.travel.Owner then return "Character busy" end
+    local data, nearest = utils.save(), nil
+    for _, id in ipairs(utils.keys(utils.modules.chests.Chests)) do
+        local config = utils.modules.chests.Get(id)
+        if data.Progression.UnlockedIslands[config.Island] then
+            local readyAt = utils.modules.chests.GetReadyAt(data, id)
+            if readyAt <= workspace:GetServerTimeNow() then
+                local job = utils.jobs.Chests
+                local generation = job.Generation
+                local function active() return runtime.Alive and job.Enabled and job.Generation == generation end
+                local model = utils.chestModel(id)
+                if not model then
+                    utils.travel.Owner = "Chests"
+                    local success, result = pcall(function()
+                        utils.remote("Island", "Travel", {Island = config.Island, Source = "Menu"})
+                        local deadline = os.clock() + 8
+                        repeat
+                            task.wait(0.2)
+                            model = utils.chestModel(id)
+                        until model or os.clock() >= deadline or not active()
+                    end)
+                    utils.travel.Owner = nil
+                    assert(success, tostring(result))
+                end
+                if not active() then return "Stopped" end
+                if not model then return "Chest is not streamed: " .. config.Island end
+                local front = model:GetAttribute(utils.modules.chests.Attributes.Front)
+                local target = typeof(front) == "CFrame" and front or utils.position(model)
+                return utils.trip("Chests", target, function()
+                    if not active() then return "Stopped" end
+                    local claims = utils.modules.chests.GetClaims(utils.save(), id)
+                    utils.remote("TapChest", "Claim", id)
+                    local deadline = os.clock() + 5
+                    repeat task.wait(0.1) until utils.modules.chests.GetClaims(utils.save(), id) > claims or os.clock() >= deadline or not active()
+                    if utils.modules.chests.GetClaims(utils.save(), id) > claims then return "Claimed " .. config.Island end
+                    return "Claim not confirmed: " .. config.Island
+                end)
+            end
+            nearest = math.min(nearest or math.huge, readyAt - workspace:GetServerTimeNow())
+        end
+    end
+    return nearest and ("Next chest in " .. utils.modules.chests.FormatCountdown(nearest)) or "Unlock a chest island"
+end
+
+function utils.setting(name, value)
+    if utils.originals[name] == nil then utils.originals[name] = {Value = utils.save().Settings[name]} end
+    utils.remote("Settings", "UpdateSetting", {Name = name, Value = value})
+end
+
+function utils.hideTapVisual(instance)
+    if not utils.clickVisuals.Enabled or utils.clickVisuals.Saved[instance] then return end
+    local name, property = instance.Name, nil
+    if instance:IsA("ScreenGui") and (name == "Popups" or name == "TS2CriticalPopups") then property = "Enabled"
+    elseif instance:IsA("GuiObject") and (name:match("^TS2Tap") or name:match("^TS2Click") or name:match("^TS2Critical") or name:match("^TS2PhysicsCoin") or name:match("^TS2CoinDrop")) then property = "Visible" end
+    if not property then return end
+    local saved = {Property = property, Value = instance[property]}
+    utils.clickVisuals.Saved[instance] = saved
+    instance[property] = false
+    saved.Connection = runtime:Connect(instance:GetPropertyChangedSignal(property), function()
+        if utils.clickVisuals.Enabled and instance[property] then instance[property] = false end
+    end)
+end
+
+function utils.hideClicks(enabled)
+    local state = utils.clickVisuals
+    if state.Enabled == enabled then return end
+    state.Enabled = enabled
+    if not enabled then
+        if state.Connection then state.Connection:Disconnect(); state.Connection = nil end
+        for _, hook in ipairs(state.Hooks) do
+            if hook.Module[hook.Name] == hook.Replacement then hook.Module[hook.Name] = hook.Original end
+        end
+        table.clear(state.Hooks)
+        for instance, saved in pairs(state.Saved) do
+            if saved.Connection then saved.Connection:Disconnect() end
+            if instance.Parent then instance[saved.Property] = saved.Value end
+        end
+        table.clear(state.Saved)
+        if utils.modules.tapEffects then
+            pcall(utils.modules.tapEffects.SetPointerEffectsEnabled, utils.modules.tapEffects, utils.modules.skills.CanClickAnywhere(utils.save()))
+        end
+        return
+    end
+    if not utils.modules.tapEffects then utils.load("tapEffects", "Modules.Client.Game.TapEffects") end
+    if not utils.modules.clickFx then utils.load("clickFx", "Modules.Client.Game.ClickFx") end
+    local replace = function(module, name, callback)
+        if type(module[name]) ~= "function" then return end
+        local original = module[name]
+        module[name] = callback
+        table.insert(state.Hooks, {Module = module, Name = name, Original = original, Replacement = callback})
+    end
+    local suppress = function() end
+    for _, name in ipairs({"Emit", "PredictManualTap", "PlayClickPopup", "PlayCriticalBurst", "BurstAtPointer", "QueueCritical"}) do replace(utils.modules.tapEffects, name, suppress) end
+    replace(utils.modules.clickFx, "Request", suppress)
+    utils.modules.tapEffects:SetPointerEffectsEnabled(false)
+    local pointer = utils.modules.tapEffects.SetPointerEffectsEnabled
+    replace(utils.modules.tapEffects, "SetPointerEffectsEnabled", function(self) return pointer(self, false) end)
+    local gui = utils.player.PlayerGui
+    for _, instance in ipairs(gui:GetDescendants()) do utils.hideTapVisual(instance) end
+    state.Connection = runtime:Connect(gui.DescendantAdded, utils.hideTapVisual)
+end
+
+function utils.closeRewards()
+    if not utils.modules.rewardPopup then utils.load("rewardPopup", "Controllers.UI.RewardPopupController") end
+    if utils.modules.rewardPopup:IsOpen() then
+        utils.modules.rewardPopup:Close()
+        return "Closing"
+    end
+    return "No reward popup"
+end
+
+function utils.reduceGraphics(instance)
+    local state = utils.performance
+    if not state.Enabled then return end
+    local function set(property, value)
+        local success, original = pcall(function() return instance[property] end)
+        if not success or original == value then return end
+        local saved = state.Saved[instance]
+        if saved and saved[property] ~= nil then return end
+        if pcall(function() instance[property] = value end) then
+            state.Saved[instance] = saved or {}
+            state.Saved[instance][property] = {Value = original}
+        end
+    end
+    if instance:IsA("ParticleEmitter") or instance:IsA("Trail") or instance:IsA("Beam")
+        or instance:IsA("Fire") or instance:IsA("Smoke") or instance:IsA("Sparkles") then
+        set("Enabled", false)
+    elseif instance:IsA("PostEffect") then
+        set("Enabled", false)
+    elseif instance:IsA("Light") then
+        set("Shadows", false)
+    elseif instance:IsA("BasePart") then
+        set("CastShadow", false)
+        local model = instance:FindFirstAncestorOfClass("Model")
+        if not (model and model:FindFirstChildOfClass("Humanoid")) then
+            set("Material", Enum.Material.SmoothPlastic)
+            set("Reflectance", 0)
+            if instance:IsA("MeshPart") then set("RenderFidelity", Enum.RenderFidelity.Performance) end
+        end
+    elseif instance:IsA("Terrain") then
+        set("WaterWaveSize", 0)
+        set("WaterWaveSpeed", 0)
+        set("WaterReflectance", 0)
+        set("Decoration", false)
+    elseif instance == services.Lighting then
+        set("GlobalShadows", false)
+        set("EnvironmentSpecularScale", 0)
+    end
+end
+
+function utils.antiLag()
+    local state = utils.performance
+    if state.Enabled then return "Anti Lag already enabled" end
+    state.Enabled = true
+    state.Connection = runtime:Connect(workspace.DescendantAdded, utils.reduceGraphics)
+    state.LightingConnection = runtime:Connect(services.Lighting.DescendantAdded, utils.reduceGraphics)
+    utils.reduceGraphics(services.Lighting)
+    for _, container in ipairs({workspace, services.Lighting}) do
+        for index, instance in ipairs(container:GetDescendants()) do
+            if not runtime.Alive then return "Stopped" end
+            utils.reduceGraphics(instance)
+            if index % 250 == 0 then task.wait() end
+        end
+    end
+    return "Anti Lag enabled"
+end
+
+runtime:AddCleanup(function()
+    utils.performance.Enabled = false
+    if utils.performance.Connection then utils.performance.Connection:Disconnect() end
+    if utils.performance.LightingConnection then utils.performance.LightingConnection:Disconnect() end
+    for instance, properties in pairs(utils.performance.Saved) do
+        for property, saved in pairs(properties) do pcall(function() instance[property] = saved.Value end) end
+    end
+    table.clear(utils.performance.Saved)
+end)
+
+function utils.hideHatch(enabled)
+    local state = utils.hatchVisuals
+    if state.Enabled == enabled then return end
+    if not enabled then
+        state.Enabled = false
+        for _, hook in ipairs(state.Hooks) do
+            if hook.Module[hook.Name] == hook.Replacement then hook.Module[hook.Name] = hook.Original end
+        end
+        table.clear(state.Hooks)
+        utils.setting("HatchAnimation", utils.originals.HatchAnimation and utils.originals.HatchAnimation.Value or 1)
+        return
+    end
+    for name, path in pairs({hatchRenderer = "HatchRenderer", secretRenderer = "SecretHatchRenderer", secretCutscenes = "SecretHatchCutscenes"}) do
+        if not utils.modules[name] then utils.load(name, "Modules.Client.Pets." .. path) end
+    end
+    local function replace(module, name, callback)
+        assert(type(module[name]) == "function", "Missing hatch renderer method: " .. name)
+        table.insert(state.Hooks, {Module = module, Name = name, Original = module[name], Replacement = callback})
+        module[name] = callback
+    end
+    -- Complete the game's sequence so receipts and queued results still settle.
+    replace(utils.modules.hatchRenderer, "Play", function(self, egg, packet, done)
+        if type(done) == "function" then task.defer(done) end
+    end)
+    for _, name in ipairs({"Play", "PlayReveal"}) do
+        replace(utils.modules.secretRenderer, name, function(self, pet, done)
+            if type(done) == "function" then task.defer(done) end
+        end)
+    end
+    replace(utils.modules.secretCutscenes, "Has", function() return false end)
+    state.Enabled = true
+    utils.setting("HatchAnimation", 3)
+end
+
+tabs.main:CreateText({
+    name = "Welcome to Silence",
+    text = "A focused control panel for Tap Simulator REBORN. Choose a section in the sidebar and monitor feature updates in Live activity."
 })
+tabs.main:CreateDivider({text = "Automation"})
+utils.section(tabs.main, "Clicking")
+utils.job(tabs.main, "Auto Tap", "Tap", utils.modules.gameConfig.ManualTapInterval, utils.tap)
+utils.controls.HideClicks = tabs.main:CreateToggle({name = "Hide Clicks", value = false, flag = "Visual.HideTaps", callback = utils.hideClicks})
+utils.section(tabs.main, "Rebirths")
+tabs.main.rebirthValues, tabs.main.rebirthMap = {"Max"}, {}
+function utils.refreshRebirths()
+    local values, map = {"Max"}, {}
+    local data = utils.save()
+    for index = 1, utils.modules.buttons.GetOptionCount(data.Upgrades.RebirthButtons or 0, data.Progression.World) do
+        local label = utils.formatNumber(utils.modules.rebirth.GetAmountFromIndex(index))
+        table.insert(values, label)
+        map[label] = tostring(index)
+    end
+    tabs.main.rebirthValues, tabs.main.rebirthMap = values, map
+end
+utils.refreshRebirths()
+tabs.main.rebirthDropdown = tabs.main:CreateDropdown({name = "Select Rebirth Amount", options = tabs.main.rebirthValues, value = "Max", flag = "Farm.RebirthAmount",
+    callback = function(value)
+        value = selectedOne(value)
+        utils.settings.farm.Rebirth = value == "Max" and "Maximum" or tabs.main.rebirthMap[value] or "Maximum"
+    end
+})
+utils.job(tabs.main, "Auto Rebirth", "Rebirth", 0.5, utils.rebirth)
+utils.section(tabs.main, "Progression")
+utils.job(tabs.main, "Auto Skill Tree", "Skills", 0.5, utils.skills)
+utils.job(tabs.main, "Auto Unlock Islands", "Islands", 5, utils.islands)
+utils.job(tabs.main, "Auto Claim Rewards", "Rewards", 20, utils.rewards)
+utils.job(tabs.main, "Auto Close Rewards", "RewardPopup", 0.3, utils.closeRewards)
+utils.job(tabs.main, "Auto Claim Chests", "Chests", 30, utils.chests)
+utils.label(tabs.main, "Rebirth")
+utils.section(tabs.main, "Performance")
+utils.action(tabs.main, "Anti Lag", "Performance", utils.antiLag)
+utils.label(tabs.main, "Performance")
+
+-- Hatching ------------------------------------------------------------------
+tabs.hatching:CreateText({name = "Egg controls", text = "Choose an egg, set the hatch amount, then enable Auto Hatch. Pet-delete options cover the full egg catalog."})
+utils.section(tabs.hatching, "Hatching")
+utils.eggNames, utils.eggMap = {}, {}
+for _, egg in ipairs(utils.sortedEggs()) do
+    local label = egg.Name .. " - " .. utils.formatNumber(egg.Price)
+    table.insert(utils.eggNames, label)
+    utils.eggMap[label] = egg.Name
+end
+local defaultEggLabel = "Basic - " .. utils.formatNumber(utils.modules.eggs.Basic.Price)
+tabs.hatching:CreateDropdown({name = "Select Egg", options = utils.eggNames, value = defaultEggLabel, flag = "Hatch.Egg",
+    callback = function(value)
+        value = selectedOne(value)
+        utils.settings.farm.Egg = utils.eggMap[value] or (utils.modules.eggs[value] and value) or "Basic"
+        utils.refreshEggDelete()
+    end
+})
+tabs.hatching:CreateDropdown({name = "Hatch Amount", options = {"1x", "3x", "8x", "Max"}, value = "Max", flag = "Hatch.Amount",
+    callback = function(value)
+        value = selectedOne(value)
+        utils.settings.farm.HatchCount = value == "Max" and 8 or tonumber(value:match("%d+")) or 3
+    end
+})
+utils.settings.farm.HatchCount = 8
+utils.job(tabs.hatching, "Auto Hatch", "Hatch", 0.2, utils.hatchEgg)
+tabs.hatching:CreateToggle({name = "Hide Hatch Animation", value = false, flag = "Visual.HideHatch", callback = utils.hideHatch})
+utils.label(tabs.hatching, "Hatch")
+utils.section(tabs.hatching, "Egg Auto Delete")
+local eggDeleteValues, eggDeleteSelected = utils.refreshEggDelete()
+tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Select Pets to Delete", options = eggDeleteValues, value = eggDeleteSelected, multiSelect = true,
+    callback = function(values)
+        local validKeys = {}
+        for _, keys in pairs(tabs.hatching.deleteRarityKeys or {}) do
+            for _, key in ipairs(keys) do validKeys[key] = true end
+        end
+        local entries = {}
+        for _, label in ipairs(selectedList(values)) do
+            local key = tabs.hatching.deleteMap[label]
+            if key and validKeys[key] then table.insert(entries, key) end
+        end
+        utils.remote("Egg", "AutoDeleteRequested", {Egg = utils.settings.farm.Egg, Entries = entries})
+    end
+})
+tabs.hatching.rarityDropdown = tabs.hatching:CreateDropdown({name = "Select Rarities to Delete", options = utils.rarities or {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}, value = tabs.hatching.deleteRarities, multiSelect = true,
+    callback = utils.deleteEggRarities
+})
+
+-- Pets ----------------------------------------------------------------------
+tabs.pets:CreateText({name = "Pet management", text = "Choose team focus, automate team and treat actions, or configure which pet names, rarities, and variants can be deleted."})
+utils.section(tabs.pets, "Team")
+utils.dropdown(tabs.pets, "Select Team Focus", utils.settings.pets, "Team", {"Clicks", "Gems", "Luck"}, "Pets.Team")
+utils.job(tabs.pets, "Auto Equip Best", "Team", 10, utils.equip)
+utils.action(tabs.pets, "Equip Best", "Team", utils.equip)
+utils.job(tabs.pets, "Auto Feed Treats", "Treats", 10, utils.feed)
+utils.section(tabs.pets, "Auto Delete")
+utils.rarities = {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}
+local deleteRarities = table.clone(utils.rarities)
+table.insert(deleteRarities, 1, "All Rarities")
+utils.multi(tabs.pets, "Select Rarities", utils.settings.pets, "Rarities", deleteRarities, "Pets.Rarities")
+utils.multi(tabs.pets, "Select Variants", utils.settings.pets, "Tiers", {"All Variants", "Normal", "Golden", "Diamond", "Rainbow"}, "Pets.Variants")
+tabs.pets.deleteNames = tabs.pets:CreateDropdown({name = "Select Pets", options = utils.inventoryPetNames(), value = {}, multiSelect = true, flag = "Pets.DeleteNames",
+    callback = function(values)
+        table.clear(utils.settings.pets.Names)
+        for _, name in ipairs(selectedList(values)) do if type(name) == "string" then utils.settings.pets.Names[name] = true end end
+    end
+})
+utils.job(tabs.pets, "Auto Delete Pets", "Cleanup", 15, utils.sellPets)
+utils.label(tabs.pets, "Cleanup")
+
+-- Crafting ------------------------------------------------------------------
+tabs.crafting:CreateText({name = "Pet crafting", text = "Choose which pet names to include in each machine. The catalog list remains available even when you acquire new pets."})
+tabs.crafting.petDropdowns = {}
+function utils.petNames(tier)
+    local names = {}
+    for name in pairs(utils.modules.launchPets) do names[name] = true end
+    for name in pairs(utils.modules.catalog) do names[name] = true end
+    local sorted = utils.keys(names)
+    table.insert(sorted, 1, "All Pets")
+    return sorted
+end
+for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Golden"}, {"Rainbow", "Shiny", "Diamond"}}) do
+    local title, machine, tier = row[1], row[2], row[3]
+    utils.section(tabs.crafting, title .. " Pets")
+    if machine == "Shiny" then
+        tabs.crafting:CreateDropdown({name = "Select Time", options = {"5h - 2 Pets", "2.5h - 3 Pets", "1h - 4 Pets", "30s - 5 Pets"}, value = "30s - 5 Pets", flag = "Craft.RainbowAmount",
+            callback = function(value) value = selectedOne(value); utils.settings.pets.RainbowCount = tonumber(value:match("(%d+) Pets")) or 5 end})
+    else
+        local choices, amounts = {}, {}
+        for count, chance in ipairs(utils.modules.machines[machine].Chances) do
+            local choice = tostring(chance) .. "% (" .. tostring(count) .. " Pets)"
+            table.insert(choices, choice)
+            amounts[choice] = count
+        end
+        tabs.crafting:CreateDropdown({name = "Select Chance", options = choices, value = choices[#choices], flag = "Craft." .. title .. "Amount",
+            callback = function(value) value = selectedOne(value); utils.settings.pets[title .. "Count"] = amounts[value] or #choices end})
+    end
+    tabs.crafting.petDropdowns[tier] = utils.multi(tabs.crafting, "Select " .. title .. " Pets", utils.settings.pets, title .. "Pets", utils.petNames(tier), "Craft." .. title .. "Pets")
+    utils.job(tabs.crafting, "Auto Craft " .. title, machine, 8, function() return utils.craft(machine) end)
+    utils.label(tabs.crafting, machine)
+end
+utils.job(tabs.crafting, "Auto Collect Shiny Stars", "Stars", 5, utils.collectStars)
+
+-- Enchanting ----------------------------------------------------------------
+tabs.enchanting:CreateText({name = "Enchant selection", text = "Select pet categories by name, tier, and rarity. The selection automatically matches matching pets in your current inventory."})
+utils.section(tabs.enchanting, "Enchanting")
+utils.multi(tabs.enchanting, "Select Enchants", utils.settings.enchant, "Traits", utils.keys(utils.modules.enchants.Enchants), "Enchant.Traits")
+function utils.enchantPets()
+    local catalog = {}
+    for name, pet in pairs(utils.modules.launchPets) do catalog[name] = pet end
+    for name, pet in pairs(utils.modules.catalog) do if not catalog[name] then catalog[name] = pet end end
+
+    local values = {"Equipped Pets", "All Owned Pets"}
+    local map = {}
+    for _, name in ipairs(utils.keys(catalog)) do
+        local pet = catalog[name]
+        local rarity = type(pet) == "table" and (pet.Rarity or "Common") or "Common"
+        for _, tier in ipairs({"Normal", "Golden", "Diamond", "Rainbow"}) do
+            local label = name .. " | " .. tier .. " | " .. tostring(rarity)
+            table.insert(values, label)
+            map[label] = {Name = name, Tier = tier, Rarity = rarity}
+        end
+    end
+    utils.enchantPetMap = map
+    return values
+end
+
+function utils.selectEnchantPets(values)
+    local settings = utils.settings.enchant
+    settings.UseEquipped = false
+    table.clear(settings.Pets)
+    table.clear(settings.PetIds)
+    local data = utils.save()
+    for _, label in ipairs(selectedList(values)) do
+        if label == "Equipped Pets" then
+            settings.UseEquipped = true
+            settings.Pets[label] = true
+        elseif label == "All Owned Pets" then
+            settings.Pets[label] = true
+            for id in pairs(data.Pets.Owned or {}) do settings.PetIds[id] = true end
+        elseif type(label) == "string" and utils.enchantPetMap[label] then
+            settings.Pets[label] = true
+            local descriptor = utils.enchantPetMap[label]
+            for id, pet in pairs(data.Pets.Owned or {}) do
+                local tier = pet.Tier == "Shiny" and "Rainbow" or pet.Tier or "Normal"
+                if pet.Name == descriptor.Name and tier == descriptor.Tier and (pet.Rarity or "Common") == descriptor.Rarity then
+                    settings.PetIds[id] = true
+                end
+            end
+        end
+    end
+end
+
+tabs.enchanting.petDropdown = tabs.enchanting:CreateDropdown({name = "Select Pets", options = utils.enchantPets(), value = {"Equipped Pets"}, multiSelect = true, flag = "Enchant.Pets",
+    callback = utils.selectEnchantPets})
+utils.job(tabs.enchanting, "Auto Enchant", "Enchant", 2, utils.enchant)
+utils.label(tabs.enchanting, "Enchant")
+
+-- Teleports -----------------------------------------------------------------
+tabs.teleport:CreateText({name = "Island travel", text = "Select an unlocked island and use Teleport. Teleport on Join repeats the selected destination after your character loads."})
+utils.section(tabs.teleport, "Islands")
+utils.settings.destination = {Island = "Spawn", OnJoin = false}
+utils.islandNames = {"Spawn"}
+for _, island in ipairs(utils.sortedIslands()) do table.insert(utils.islandNames, island.Name) end
+utils.dropdown(tabs.teleport, "Select Island", utils.settings.destination, "Island", utils.islandNames, "Travel.Island")
+function utils.teleport()
+    assert(not utils.travel.Owner, "Character busy")
+    utils.remote("Island", "Travel", {Island = utils.settings.destination.Island, Source = "Menu"})
+    return utils.settings.destination.Island
+end
+utils.action(tabs.teleport, "Teleport", "Travel", utils.teleport)
+tabs.teleport:CreateToggle({name = "Teleport on Join", value = false, flag = "Travel.OnJoin", callback = function(enabled)
+    utils.settings.destination.OnJoin = enabled
+    if enabled then runtime:Spawn(function() task.wait(1); if runtime.Alive and utils.settings.destination.OnJoin then pcall(utils.teleport) end end) end
+end})
+utils.label(tabs.teleport, "Travel")
+
+-- Miscellaneous ------------------------------------------------------------
+tabs.misc:CreateText({name = "Extra automation", text = "Optional minigame, potion, shrine, totem, and relic helpers. Enable only the features you need."})
+utils.section(tabs.misc, "Minigames")
+utils.job(tabs.misc, "Auto Colosseum", "Arena", 20, utils.colosseum, function()
+    if utils.arena.Active then pcall(utils.remote, "Colosseum", "EndWaveDefense") end
+    utils.arena.Active = false
+end)
+utils.job(tabs.misc, "Auto Memory Match", "Memory", 20, utils.memoryGame)
+utils.job(tabs.misc, "Auto Dig", "Dig", 20, utils.digGame)
+utils.label(tabs.misc, "Arena")
+utils.label(tabs.misc, "Memory")
+utils.label(tabs.misc, "Dig")
+utils.section(tabs.misc, "Potions")
+utils.multi(tabs.misc, "Select Potion Types", utils.settings.boosts, "Types", {"Coins", "Gems", "Luck", "OctoHatch", "GoldenHatch", "EnchantAnimSpeed"}, "Boosts.Types")
+utils.job(tabs.misc, "Auto Use Potions", "Boosts", 15, utils.potions)
+utils.dropdown(tabs.misc, "Select Potion", utils.settings.boosts, "Brew", utils.modules.brew.Potions, "Boosts.Brew")
+utils.job(tabs.misc, "Auto Potion Machine", "Potions", 20, utils.potionMachine)
+utils.dropdown(tabs.misc, "Select Potion Amount", utils.settings.boosts, "Bundle", {"1", "3", "10"}, "Boosts.Bundle")
+utils.action(tabs.misc, "Buy Potions", "Potions", function()
+    return utils.trip("Potions", workspace.Map1:FindFirstChild("PotionMachine"), function()
+        utils.remote("PotionMachine", "Buy", tonumber(utils.settings.boosts.Bundle))
+        return "Purchased"
+    end)
+end)
+utils.section(tabs.misc, "Boosts")
+utils.dropdown(tabs.misc, "Select Blessing", utils.settings.boosts, "Shrine", {"Luck", "Golden", "AutoClicker"}, "Boosts.Shrine")
+utils.job(tabs.misc, "Auto Shrine", "Shrine", 30, utils.shrine)
+utils.job(tabs.misc, "Auto Totems", "Totems", 30, utils.totems)
+utils.relicNames = {"Automatic"}
+for _, name in ipairs(utils.modules.relics.Order) do table.insert(utils.relicNames, name) end
+utils.dropdown(tabs.misc, "Select Relic", utils.settings.boosts, "Relic", utils.relicNames, "Boosts.Relic")
+utils.job(tabs.misc, "Auto Relic", "Relic", 20, utils.relic)
+
+-- Configuration ------------------------------------------------------------
+tabs.config:CreateText({name = "Interface and presets", text = "Rayfield Gen2 saves flagged controls automatically. You can also save, load, and delete named configurations below."})
+utils.settings.config = {Name = "Default"}
+function utils.configName()
+    local name = tostring(utils.settings.config.Name or ""):match("^%s*(.-)%s*$")
+    assert(type(name) == "string" and #name > 0 and #name <= 48 and name:match("^[%w _%-]+$"), "Enter a valid configuration name")
+    return name
+end
+tabs.config:CreateInput({name = "Configuration Name", value = "Default", placeholder = "Enter a config name", flag = "Config.Name", callback = function(value)
+    utils.settings.config.Name = value
+end})
+utils.action(tabs.config, "Save Configuration", "Configuration", function()
+    local name = utils.configName()
+    local success = window:Save(name)
+    assert(success, "Rayfield could not save this configuration in the current environment")
+    return "Saved " .. name
+end)
+utils.action(tabs.config, "Load Configuration", "Configuration", function()
+    local name = utils.configName()
+    local success = window:Load(name)
+    assert(success, "Configuration not found or loading is unavailable")
+    return "Loaded " .. name
+end)
+utils.action(tabs.config, "Delete Configuration", "Configuration", function()
+    local name = utils.configName()
+    local success = window:DeleteConfig(name)
+    assert(success, "Could not delete configuration " .. name)
+    return "Deleted " .. name
+end)
+utils.action(tabs.config, "List Configurations", "Configuration", function()
+    local names = window:ListConfigs() or {}
+    table.sort(names)
+    local content = #names > 0 and table.concat(names, ", ") or "No saved configurations found."
+    notify("Saved configurations", content, 6)
+    return tostring(#names) .. " configuration(s)"
+end)
+tabs.config:CreateDivider({text = "Appearance"})
+tabs.config:CreateDropdown({name = "Theme", options = {"default", "cobalt", "ember", "amethyst", "frost", "rose"}, value = "ember", forgetState = true,
+    callback = function(value)
+        local themeName = selectedOne(value)
+        if themeName then window:ChangeTheme(themeName) end
+    end
+})
+tabs.config:CreateDivider({text = "Session controls"})
+utils.action(tabs.config, "Stop All Automations", "Session", function()
+    utils.stop()
+    return "All automations stopped"
+end)
+utils.action(tabs.config, "Unload Silence", "Session", function()
+    runtime:Destroy()
+    return "Unloaded"
+end)
+utils.label(tabs.config, "Configuration")
+
+window:Toast({title = "Silence loaded", subtitle = "Rayfield Gen2 interface ready", duration = 4})
+
+runtime:Connect(utils.player.Idled, function()
+    pcall(function()
+        services.VirtualUser:CaptureController()
+        services.VirtualUser:ClickButton2(Vector2.new())
+    end)
+end)
+runtime:Connect(utils.player.CharacterAdded, function()
+    utils.travel.Owner, utils.travel.Origin = nil, nil
+    utils.hatch.LastEgg = nil
+    table.clear(utils.hatch.Pending)
+end)
+runtime:AddCleanup(function()
+    utils.hideClicks(false)
+    utils.hideHatch(false)
+    for _, job in pairs(utils.jobs) do
+        job.Enabled = false
+        if job.Cleanup then pcall(job.Cleanup) end
+    end
+    if utils.travel.Origin then pcall(function() local root = utils.character(); root.CFrame = utils.travel.Origin end) end
+    for name, value in pairs(utils.originals) do pcall(utils.remote, "Settings", "UpdateSetting", {Name = name, Value = value.Value}) end
+end)
+runtime:Spawn(function()
+    local deadline
+    while runtime.Alive do
+        local job = utils.jobs.Tap
+        if job.Enabled then
+            deadline = deadline or os.clock()
+            local success, result = pcall(job.Callback)
+            utils.identityReset()
+            if not success then utils.message("Tap", result) end
+            deadline += job.Interval
+            if deadline < os.clock() then deadline = os.clock() + job.Interval end
+            task.wait(math.max(0, deadline - os.clock()))
+        else
+            deadline = nil
+            task.wait(0.05)
+        end
+    end
+end)
+runtime:Spawn(function()
+    while runtime.Alive do
+        local now = os.clock()
+        for key, job in pairs(utils.jobs) do
+            if key ~= "Tap" and job.Enabled and not job.Busy and now >= job.Next then
+                job.Busy = true
+                runtime:Spawn(function()
+                    local success, result = pcall(job.Callback)
+                    utils.identityReset()
+                    job.Busy = false
+                    job.Next = os.clock() + math.max(0.1, job.Interval)
+                    if job.Enabled then utils.message(key, success and (result or "Active") or result) end
+                end)
+            end
+        end
+        task.wait(0.05)
+    end
+end)
+return utils, window
