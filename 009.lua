@@ -22,7 +22,7 @@ function Maid:clean()
 		self.tasks[index] = nil
 		local kind = typeof(task)
 		if kind == "RBXScriptConnection" then
-			task:Disconnect()
+			pcall(task.Disconnect, task)
 		elseif kind == "Instance" then
 			pcall(task.Destroy, task)
 		elseif kind == "function" then
@@ -41,11 +41,11 @@ local MATCH_PLACE_ID = 115317125060158
 local CONFIG = {
 	REEXEC_SOURCE = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/primelyn123-jpg/monkey-hub/main/MonkeyHub.lua"))()',
 	READY_TIMEOUT = 90,
-	TICK_RATE = 0.08,
-	BOSS_TICK_RATE = 0.03,
+	TICK_RATE = 0.12,
+	BOSS_TICK_RATE = 0.08,
 	SCAN_MAX = 4096,
 	SCAN_RADIUS = 2000,
-	ESP_MAX = 150,
+	ESP_MAX = 90,
 	ESP_RADIUS = 600,
 	BOSS_DISTANCE = 90,
 	BOSS_RETREAT_DISTANCE = 120,
@@ -54,11 +54,11 @@ local CONFIG = {
 	SKIP_ENEMY_LIMIT = 400,
 	SKIP_RESUME_ENEMIES = 300,
 	FLIGHT_HEIGHT = 2.5,
-	
+
 	CHEST_REACH = 7,
 	CHEST_TIMEOUT = 30,
-	
-	REMOTE_GAPS = { Vote = 1, GameAction = 10 },
+
+	REMOTE_GAPS = { Vote = 1, HealthUpgrade = 1, GameAction = 10 },
 }
 
 local playersService = game:GetService("Players")
@@ -92,13 +92,17 @@ local skillCrowd = newCrowd()
 local espCrowd = newCrowd()
 
 local function safeRequire(module)
-	local previous = getthreadidentity and getthreadidentity() or 8
+	local previous = 8
+	if getthreadidentity then
+		local ok, value = pcall(getthreadidentity)
+		if ok then previous = value end
+	end
 	if setthreadidentity then
-		setthreadidentity(2)
+		pcall(setthreadidentity, 2)
 	end
 	local ok, result = pcall(require, module)
 	if setthreadidentity then
-		setthreadidentity(previous)
+		pcall(setthreadidentity, previous)
 	end
 	if not ok then
 		error(string.format("require %s failed: %s", module:GetFullName(), tostring(result)), 2)
@@ -157,6 +161,7 @@ local function loadGame()
 	Game.waves = waitPath(replicatedStorage, "Shared.Waves")
 	Game.bossesLive = waitPath(replicatedStorage, "Shared.Bosses.Live")
 	Game.voteRemote = waitPath(Game.waves, "Vote")
+	Game.upgradeRemote = waitPath(replicatedStorage, "Remotes.UpgradeRequest")
 	Game.gameActionRemote = waitPath(replicatedStorage, "Remotes.GameAction")
 	Game.bossFxRemote = waitPath(replicatedStorage, "Shared.Bosses.Fx")
 	Game.aoeRemote = waitPath(replicatedStorage, "Shared.Effects.Aoe")
@@ -383,6 +388,20 @@ local function survival(root, humanoid, now)
 	end
 end
 
+local function autoHealthUpgrade()
+	if not enabled("AutoHealthUpgrade") then
+		return
+	end
+	if localPlayer:GetAttribute("HealthUpgradeAvailable") ~= true then
+		return
+	end
+	local cash = localPlayer:GetAttribute("Cash") or 0
+	local cost = localPlayer:GetAttribute("HealthUpgradeCost") or math.huge
+	if cash >= cost then
+		Net.fire("HealthUpgrade", "HealthUpgrade", Game.upgradeRemote, "Health")
+	end
+end
+
 local function adaptiveSkip(root, humanoid, now)
 	if now - state.lastSkipScan < 0.4 then
 		return
@@ -496,15 +515,27 @@ function Chest.pick(root)
 end
 
 function Chest.plan(chest, root)
-	local path = pathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
-	local ok = pcall(path.ComputeAsync, path, root.Position, chest:GetPivot().Position)
-	Chest.waypoints = ok and path.Status == Enum.PathStatus.Success and path:GetWaypoints() or nil
-	Chest.waypointIndex = 2
+	local ok, waypoints = pcall(function()
+		if not chest or not chest.Parent or not root or not root.Parent then
+			return nil
+		end
+		local path = pathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
+		path:ComputeAsync(root.Position, chest:GetPivot().Position)
+		if path.Status == Enum.PathStatus.Success then
+			return path:GetWaypoints()
+		end
+		return nil
+	end)
+	return ok and waypoints or nil
 end
 
 function Chest.step(humanoid, root, now)
 	if not enabled("AutoChest") or state.bossId or (state.healthRatio or 1) < 0.6 or enabled("FlightOrbit") then
+		if Chest.target then
+			humanoid:Move(Vector3.zero)
+		end
 		Chest.target = nil
+		Chest.planning = false
 		return false
 	end
 	if not Chest.target then
@@ -517,13 +548,18 @@ function Chest.step(humanoid, root, now)
 		end
 		Chest.target, Chest.prompt, Chest.startedAt, Chest.lastStart = chest, prompt, now, now
 		Chest.planning = true
+		Chest.waypoints = nil
 		task.spawn(function()
-			Chest.plan(chest, root)
-			Chest.planning = false
+			local waypoints = Chest.plan(chest, root)
+			if Chest.target == chest then
+				Chest.waypoints = waypoints
+				Chest.waypointIndex = 2
+				Chest.planning = false
+			end
 		end)
 	end
 	local chest, prompt = Chest.target, Chest.prompt
-	if not chest.Parent or not prompt.Enabled or Chest.isOpened(chest) or now - Chest.startedAt > CONFIG.CHEST_TIMEOUT then
+	if not chest or not prompt or not chest.Parent or not prompt.Enabled or Chest.isOpened(chest) or now - Chest.startedAt > CONFIG.CHEST_TIMEOUT then
 		Chest.tried[chest] = os.clock() + 20
 		Chest.target = nil
 		return false
@@ -573,7 +609,7 @@ end
 
 function Flight.restoreObstacles()
 	for _, connection in Flight.obstacleConnections do
-		connection:Disconnect()
+		pcall(connection.Disconnect, connection)
 	end
 	table.clear(Flight.obstacleConnections)
 	for object, original in Flight.obstacleState do
@@ -590,13 +626,15 @@ end
 function Flight.stop()
 	Flight.restoreObstacles()
 	if Flight.velocity then
-		Flight.velocity:Destroy()
+		pcall(Flight.velocity.Destroy, Flight.velocity)
 	end
 	if Flight.attachment then
-		Flight.attachment:Destroy()
+		pcall(Flight.attachment.Destroy, Flight.attachment)
 	end
 	if Flight.root and Flight.root.Parent then
-		Flight.root.AssemblyLinearVelocity = Vector3.zero
+		pcall(function()
+			Flight.root.AssemblyLinearVelocity = Vector3.zero
+		end)
 	end
 	Flight.root, Flight.attachment, Flight.velocity, Flight.center = nil, nil, nil, nil
 end
@@ -681,11 +719,17 @@ local function replay(humanoid)
 	if not ended and not (endGui and endGui.Enabled and gameOver and gameOver.Visible) then
 		return true
 	end
-	if enabled("ReExecute") and not state.teleportQueued then
-		local queue = queue_on_teleport or getgenv().queueonteleport
-		if queue then
-			queue(CONFIG.REEXEC_SOURCE)
-			state.teleportQueued = true
+	if enabled("ReExecute") and not state.teleportQueued and CONFIG.REEXEC_SOURCE ~= "" then
+		local queue = queue_on_teleport
+		if type(queue) ~= "function" and type(getgenv) == "function" then
+			local ok, env = pcall(getgenv)
+			if ok and type(env) == "table" then
+				queue = env.queueonteleport or env.queue_on_teleport
+			end
+		end
+		if type(queue) == "function" then
+			local ok = pcall(queue, CONFIG.REEXEC_SOURCE)
+			state.teleportQueued = ok
 		end
 	end
 	Net.fire("Replay", "GameAction", Game.gameActionRemote, "Replay")
@@ -705,15 +749,16 @@ local function updateStatus(now)
 	local ok, data = pcall(Game.data.GetData, Game.data)
 	local gems = ok and data and data.Gems or 0
 	state.statusLabel:Set(string.format(
-		"Gems %s | run +%s\nWave %s | kills %s | monkeys %s\nBoss %s\nRemotes sent %d (vote %d, act %d)",
+		"Gems %s  |  Run +%s\nWave %s  |  Kills %s\nEnemies %s\nBoss %s\nRequests %d (wave %d, health %d, replay %d)",
 		formatNumber(gems),
 		formatNumber(localPlayer:GetAttribute("RunGems")),
 		tostring(Game.waves:GetAttribute("Number") or "-"),
 		formatNumber(localPlayer:GetAttribute("Kills")),
 		tostring(state.liveEnemies or 0),
-		state.bossName and string.format("%s (%s hp)", state.bossName, tostring(state.bossHealth)) or "none",
+		state.bossName and string.format("%s (%s HP)", tostring(state.bossName), tostring(state.bossHealth)) or "None",
 		Net.total,
 		Net.counts.Vote or 0,
+		Net.counts.HealthUpgrade or 0,
 		Net.counts.GameAction or 0
 	))
 end
@@ -736,6 +781,7 @@ local function update()
 	end
 	survival(root, humanoid, now)
 	adaptiveSkip(root, humanoid, now)
+	autoHealthUpgrade()
 	if enabled("FlightOrbit") then
 		Flight.orbit(humanoid, root, now)
 	else
@@ -748,72 +794,141 @@ local function update()
 	end
 end
 
-local Esp = { dots = {} }
+local Esp = { boxes = {}, labels = {}, count = 0, lastScan = 0 }
 
 function Esp.init()
 	if not Drawing then
 		return
 	end
-	for i = 1, CONFIG.ESP_MAX do
-		local dot = Drawing.new("Circle")
-		dot.Filled = true
-		dot.NumSides = 12
-		dot.Thickness = 1
-		dot.Transparency = 1
-		dot.Visible = false
-		Esp.dots[i] = maid:give(dot)
+	local ok = pcall(function()
+		for i = 1, CONFIG.ESP_MAX do
+			local box = Drawing.new("Square")
+			box.Filled = false
+			box.Thickness = 1.4
+			box.Transparency = 1
+			box.Visible = false
+			Esp.boxes[i] = maid:give(box)
+
+			local label = Drawing.new("Text")
+			label.Center = true
+			label.Outline = true
+			label.Size = 13
+			label.Font = 2
+			label.Visible = false
+			Esp.labels[i] = maid:give(label)
+		end
+
+		Esp.bossBox = maid:give(Drawing.new("Square"))
+		Esp.bossBox.Filled = false
+		Esp.bossBox.Thickness = 2
+		Esp.bossBox.Transparency = 1
+		Esp.bossBox.Color = Color3.fromRGB(255, 70, 85)
+		Esp.bossBox.Visible = false
+
+		Esp.bossLabel = maid:give(Drawing.new("Text"))
+		Esp.bossLabel.Center = true
+		Esp.bossLabel.Outline = true
+		Esp.bossLabel.Size = 15
+		Esp.bossLabel.Font = 2
+		Esp.bossLabel.Color = Color3.fromRGB(255, 90, 100)
+		Esp.bossLabel.Visible = false
+	end)
+	if not ok then
+		Esp.hide(1)
+		Esp.bossBox = nil
+		Esp.bossLabel = nil
 	end
-	Esp.boss = maid:give(Drawing.new("Text"))
-	Esp.boss.Center = true
-	Esp.boss.Outline = true
-	Esp.boss.Size = 18
-	Esp.boss.Color = Color3.fromRGB(255, 80, 80)
-	Esp.boss.Visible = false
 end
 
 function Esp.hide(from)
-	for i = from, #Esp.dots do
-		Esp.dots[i].Visible = false
+	for i = from, #Esp.boxes do
+		local box = Esp.boxes[i]
+		local label = Esp.labels[i]
+		if box then box.Visible = false end
+		if label then label.Visible = false end
 	end
+	if Esp.bossBox then Esp.bossBox.Visible = false end
+	if Esp.bossLabel then Esp.bossLabel.Visible = false end
 end
 
 function Esp.render()
-	if not Drawing or not Esp.boss then
+	if not Drawing or not Esp.bossBox or not Esp.bossLabel then
 		return
 	end
 	local camera = workspace.CurrentCamera
-	if not enabled("MonkeyEsp") or not camera then
+	if not camera then
 		Esp.hide(1)
-	else
-		local focus = camera.CFrame.Position
-		local count = Game.units.crowd(focus.X, focus.Z, CONFIG.ESP_RADIUS, CONFIG.ESP_MAX, espCrowd)
+		return
+	end
+
+	local now = os.clock()
+	if enabled("MonkeyEsp") then
+		if now - Esp.lastScan >= 0.15 then
+			Esp.lastScan = now
+			local focus = camera.CFrame.Position
+			Esp.count = Game.units.crowd(focus.X, focus.Z, CONFIG.ESP_RADIUS, CONFIG.ESP_MAX, espCrowd)
+		end
+
 		local color = Options.EspColor and Options.EspColor.Value or Color3.fromRGB(255, 200, 60)
 		local used = 0
-		for i = 1, count do
+		for i = 1, Esp.count do
 			if espCrowd.hp[i] <= 0 then
 				continue
 			end
-			local screen, onScreen = camera:WorldToViewportPoint(crowdPoint(espCrowd, i))
-			if not onScreen then
+			local screen, onScreen = camera:WorldToViewportPoint(crowdPoint(espCrowd, i) + Vector3.new(0, 3, 0))
+			if not onScreen or screen.Z <= 0 then
 				continue
 			end
 			used += 1
-			local dot = Esp.dots[used]
-			dot.Position = Vector2.new(screen.X, screen.Y)
-			dot.Radius = math.clamp(300 / math.max(screen.Z, 1), 2, 9)
-			dot.Color = espCrowd.id[i] == state.bossId and Color3.fromRGB(255, 60, 60) or color
-			dot.Visible = true
+			local box = Esp.boxes[used]
+			local label = Esp.labels[used]
+			if not box or not label then
+				break
+			end
+			local height = math.clamp(2600 / math.max(screen.Z, 1), 18, 96)
+			local width = height * 0.58
+			local position = Vector2.new(screen.X - width * 0.5, screen.Y - height * 0.5)
+			local isBoss = espCrowd.id[i] == state.bossId
+			local markerColor = isBoss and Color3.fromRGB(255, 70, 85) or color
+			box.Position = position
+			box.Size = Vector2.new(width, height)
+			box.Color = markerColor
+			box.Visible = true
+			label.Text = string.format("%s HP", formatNumber(espCrowd.hp[i]))
+			label.Position = Vector2.new(screen.X, position.Y - 16)
+			label.Color = markerColor
+			label.Visible = true
 		end
-		Esp.hide(used + 1)
+		for i = used + 1, #Esp.boxes do
+			Esp.boxes[i].Visible = false
+			Esp.labels[i].Visible = false
+		end
+	else
+		for i = 1, #Esp.boxes do
+			Esp.boxes[i].Visible = false
+			Esp.labels[i].Visible = false
+		end
 	end
-	if not enabled("BossEsp") or not camera or not state.bossPoint then
-		Esp.boss.Visible = false
+
+	if not enabled("BossEsp") or not state.bossPoint then
+		Esp.bossBox.Visible = false
+		Esp.bossLabel.Visible = false
 		return
 	end
-	local screen, onScreen = camera:WorldToViewportPoint(state.bossPoint + Vector3.new(0, 8, 0))
-	Esp.boss.Visible = onScreen
-	Esp.boss.Position = Vector2.new(screen.X, screen.Y)
-	Esp.boss.Text = string.format("%s  %s hp", tostring(state.bossName), tostring(state.bossHealth))
+	local bossPosition = state.bossPoint + Vector3.new(0, 9, 0)
+	local screen, onScreen = camera:WorldToViewportPoint(bossPosition)
+	if not onScreen or screen.Z <= 0 then
+		Esp.bossBox.Visible = false
+		Esp.bossLabel.Visible = false
+		return
+	end
+	local width, height = 72, 88
+	Esp.bossBox.Position = Vector2.new(screen.X - width * 0.5, screen.Y - height * 0.5)
+	Esp.bossBox.Size = Vector2.new(width, height)
+	Esp.bossBox.Visible = true
+	Esp.bossLabel.Text = string.format("%s  %s HP", tostring(state.bossName or "BOSS"), formatNumber(state.bossHealth))
+	Esp.bossLabel.Position = Vector2.new(screen.X, screen.Y - height * 0.5 - 18)
+	Esp.bossLabel.Visible = true
 end
 
 local Misc = { lighting = nil }
@@ -843,8 +958,10 @@ function Misc.init()
 		if not enabled("AntiAfk") then
 			return
 		end
-		virtualUser:CaptureController()
-		virtualUser:ClickButton2(Vector2.new(0, 0))
+		pcall(function()
+			virtualUser:CaptureController()
+			virtualUser:ClickButton2(Vector2.new(0, 0))
+		end)
 	end))
 	maid:give(userInputService.JumpRequest:Connect(function()
 		if not enabled("InfiniteJump") then
@@ -856,17 +973,26 @@ function Misc.init()
 		end
 	end))
 	maid:give(runService.Heartbeat:Connect(function()
+		if not enabled("WalkSpeed") and not Misc.baseSpeed then
+			return
+		end
 		local _, humanoid = getCharacter()
 		if not humanoid then
 			return
 		end
-		if enabled("WalkSpeed") then
-			Misc.baseSpeed = Misc.baseSpeed or humanoid.WalkSpeed
-			humanoid.WalkSpeed = Options.WalkSpeedValue.Value
-		elseif Misc.baseSpeed then
-			humanoid.WalkSpeed = Misc.baseSpeed
-			Misc.baseSpeed = nil
-		end
+		pcall(function()
+			if enabled("WalkSpeed") then
+				if Misc.speedHumanoid ~= humanoid then
+					Misc.speedHumanoid = humanoid
+					Misc.baseSpeed = humanoid.WalkSpeed
+				end
+				humanoid.WalkSpeed = Options.WalkSpeedValue.Value
+			elseif Misc.baseSpeed and Misc.speedHumanoid == humanoid then
+				humanoid.WalkSpeed = Misc.baseSpeed
+				Misc.baseSpeed = nil
+				Misc.speedHumanoid = nil
+			end
+		end)
 	end))
 end
 
@@ -885,14 +1011,12 @@ local function buildUi()
 	local window = Rayfield:CreateWindow({
 		name = "Monkey Hub",
 		subtitle = "Survive a Million Monkeys",
-		theme = "cobalt",
 		sidebarLayout = true,
-		profile = "Survive a Million Monkeys",
+		toggleUIKeybind = "RightControl",
 		configuration = {
 			autoSave = true,
 			autoLoad = true,
 			fileName = "MonkeyHub",
-			customFolder = "MonkeyHub",
 		},
 	})
 
@@ -905,129 +1029,115 @@ local function buildUi()
 			})
 		end,
 		Unload = function()
-			window:Unload()
+			pcall(Rayfield.Destroy, Rayfield)
 		end,
 	}
 
-	local function addToggle(tab, idx, cfg)
-		local entry = { Value = cfg.Default == true }
-		Toggles[idx] = entry
+	local function addToggle(tab, flag, name, default, callback)
+		local entry = { Value = default == true }
+		Toggles[flag] = entry
 		tab:CreateToggle({
-			name = cfg.Risky and (cfg.Text .. " (risky)") or cfg.Text,
+			name = name,
 			value = entry.Value,
-			flag = idx,
+			flag = flag,
 			callback = function(value)
 				entry.Value = value == true
-				if cfg.Callback then
-					cfg.Callback(entry.Value)
+				if callback then
+					local ok, err = pcall(callback, entry.Value)
+					if not ok then
+						warn("[MonkeyHub] " .. flag .. ": " .. tostring(err))
+					end
 				end
 			end,
 		})
 	end
 
-	local function addSlider(tab, idx, cfg)
-		local entry = { Value = cfg.Default, Raw = cfg.Default }
-		Options[idx] = entry
+	local function addSlider(tab, flag, name, default, minimum, maximum, increment)
+		local entry = { Value = default, Raw = default }
+		Options[flag] = entry
 		tab:CreateSlider({
-			name = cfg.Text,
-			range = { cfg.Min, cfg.Max },
-			increment = cfg.Increment or 1,
-			value = cfg.Default,
-			flag = idx,
+			name = name,
+			range = { minimum, maximum },
+			increment = increment or 1,
+			value = default,
+			flag = flag,
 			callback = function(value)
 				entry.Value, entry.Raw = value, value
 			end,
 		})
 	end
 
-	local function addDropdown(tab, idx, cfg)
-		local names = cfg.Values
-		local selected = names[cfg.Default or 1]
+	local function addDropdown(tab, flag, name, values, default, map)
 		local entry = {
-			Value = cfg.Map and cfg.Map[selected] or selected,
-			Raw = selected,
+			Value = map and map[default] or default,
+			Raw = default,
 		}
-		Options[idx] = entry
+		Options[flag] = entry
 		tab:CreateDropdown({
-			name = cfg.Text,
-			options = names,
-			value = selected,
-			flag = idx,
+			name = name,
+			options = values,
+			value = default,
+			flag = flag,
 			callback = function(value)
-				local name = type(value) == "table" and value[1] or value
-				if not name then
+				local selected = type(value) == "table" and value[1] or value
+				if selected == nil then
 					return
 				end
-				entry.Raw = name
-				entry.Value = cfg.Map and cfg.Map[name] or name
+				entry.Raw = selected
+				entry.Value = map and map[selected] or selected
 			end,
 		})
 	end
 
-	window:CreateSection({ name = "Gameplay" })
-
-	local survivalTab = window:CreateTab({ name = "Survival" })
-	survivalTab:CreateSection({ name = "Dodging" })
-	addToggle(survivalTab, "AvoidHazards", { Text = "Dodge boss attacks / acid", Default = false })
-	addToggle(survivalTab, "Kite", { Text = "Kite the swarm (walk)", Default = false })
-	addSlider(survivalTab, "KiteDistance", { Text = "Kite distance", Default = 22, Min = 8, Max = 60 })
+	local survivalTab = window:CreateTab({ name = "Survival", icon = "shield" })
+	survivalTab:CreateSection({ name = "Hazard Avoidance" })
+	addToggle(survivalTab, "AvoidHazards", "Avoid Hazards", false)
+	addToggle(survivalTab, "Kite", "Keep Distance", false)
+	addSlider(survivalTab, "KiteDistance", "Safe Distance", 22, 8, 60)
 	survivalTab:CreateSection({ name = "Flight" })
-	addToggle(survivalTab, "FlightOrbit", { Text = "Flight orbit farm", Default = false, Risky = true })
-	addToggle(survivalTab, "FlightNoclip", { Text = "Noclip while flying", Default = false, Risky = true })
-	addSlider(survivalTab, "FlightSpeed", { Text = "Flight speed", Default = 40, Min = 16, Max = 64 })
+	addToggle(survivalTab, "FlightOrbit", "Orbit Flight", false)
+	addToggle(survivalTab, "FlightNoclip", "Pass Through Obstacles", false)
+	addSlider(survivalTab, "FlightSpeed", "Flight Speed", 40, 16, 64)
 
-	local progressTab = window:CreateTab({ name = "Progress" })
+	local progressTab = window:CreateTab({ name = "Progress", icon = "chart-no-axes-column" })
+	progressTab:CreateSection({ name = "Upgrades" })
+	addToggle(progressTab, "AutoHealthUpgrade", "Auto Health Upgrade", false)
 	progressTab:CreateSection({ name = "Waves" })
-	addToggle(progressTab, "AutoSkip", { Text = "Smart wave skip", Default = false })
-	progressTab:CreateSection({ name = "Loot" })
-	addToggle(progressTab, "AutoChest", { Text = "Auto open chests (walks there)", Default = false })
-	addSlider(progressTab, "ChestReserve", { Text = "Keep cash reserve", Default = 0, Min = 0, Max = 2000 })
-	progressTab:CreateSection({ name = "Runs" })
-	addToggle(progressTab, "AutoReplay", { Text = "Auto replay", Default = false })
-	addToggle(progressTab, "ReExecute", { Text = "Re-run hub after replay teleport", Default = true })
+	addToggle(progressTab, "AutoSkip", "Auto Skip Waves", false)
+	progressTab:CreateSection({ name = "Chests" })
+	addToggle(progressTab, "AutoChest", "Auto Open Chests", false)
+	addSlider(progressTab, "ChestReserve", "Cash Reserve", 0, 0, 2000)
+	progressTab:CreateSection({ name = "Replay" })
+	addToggle(progressTab, "AutoReplay", "Auto Replay", false)
+	addToggle(progressTab, "ReExecute", "Run Again After Replay", true)
 
-	local statusTab = window:CreateTab({ name = "Status" })
-	statusTab:CreateSection({ name = "Run" })
-	state.statusLabel = statusTab:CreateText({ name = "Run status", text = "Loading..." })
+	local statusTab = window:CreateTab({ name = "Status", icon = "activity" })
+	statusTab:CreateSection({ name = "Current Run" })
+	state.statusLabel = statusTab:CreateText({ name = "Run Status", text = "Loading..." })
 
-	window:CreateSection({ name = "Visuals" })
-
-	local espTab = window:CreateTab({ name = "ESP" })
+	local espTab = window:CreateTab({ name = "ESP", icon = "eye" })
 	espTab:CreateSection({ name = "Monkeys" })
-	addToggle(espTab, "MonkeyEsp", { Text = "Monkey ESP", Default = false })
-	addDropdown(espTab, "EspColor", {
-		Text = "Monkey color",
-		Values = { "Gold", "Red", "Cyan", "Purple", "Green" },
-		Default = 1,
-		Map = ESP_COLORS,
-	})
+	addToggle(espTab, "MonkeyEsp", "Show Monkeys", false)
+	addDropdown(espTab, "EspColor", "Marker Color", { "Gold", "Red", "Cyan", "Purple", "Green" }, "Gold", ESP_COLORS)
 	espTab:CreateSection({ name = "Bosses" })
-	addToggle(espTab, "BossEsp", { Text = "Boss ESP", Default = true })
+	addToggle(espTab, "BossEsp", "Show Boss", true)
 
-	local worldTab = window:CreateTab({ name = "World" })
+	local worldTab = window:CreateTab({ name = "World", icon = "sun" })
 	worldTab:CreateSection({ name = "Lighting" })
-	addToggle(worldTab, "Fullbright", { Text = "Fullbright", Default = false, Callback = Misc.setFullbright })
+	addToggle(worldTab, "Fullbright", "Fullbright", false, Misc.setFullbright)
 
-	window:CreateSection({ name = "Player" })
+	local movementTab = window:CreateTab({ name = "Movement", icon = "person-standing" })
+	movementTab:CreateSection({ name = "Utility" })
+	addToggle(movementTab, "AntiAfk", "Anti AFK", true)
+	addToggle(movementTab, "InfiniteJump", "Infinite Jump", false)
+	movementTab:CreateSection({ name = "Movement" })
+	addToggle(movementTab, "WalkSpeed", "Enable Walk Speed", false)
+	addSlider(movementTab, "WalkSpeedValue", "Walk Speed", 22, 16, 40)
 
-	local moveTab = window:CreateTab({ name = "Movement" })
-	moveTab:CreateSection({ name = "Utility" })
-	addToggle(moveTab, "AntiAfk", { Text = "Anti-AFK", Default = true })
-	moveTab:CreateSection({ name = "Movement" })
-	addToggle(moveTab, "WalkSpeed", { Text = "Walk speed", Default = false, Risky = true })
-	addSlider(moveTab, "WalkSpeedValue", { Text = "Speed", Default = 22, Min = 16, Max = 40 })
-	addToggle(moveTab, "InfiniteJump", { Text = "Infinite jump", Default = false, Risky = true })
-
-	window:CreateSection({ name = "System" })
-
-	local settingsTab = window:CreateTab({ name = "Settings" })
-	settingsTab:CreateSection({ name = "Menu" })
-	settingsTab:CreateText({
-		name = "Visibility",
-		text = "Use the Rayfield hide pill to show or hide the menu.",
-	})
+	local settingsTab = window:CreateTab({ name = "Settings", icon = "settings" })
+	settingsTab:CreateSection({ name = "Interface" })
 	settingsTab:CreateButton({
-		name = "Unload",
+		name = "Unload Monkey Hub",
 		callback = function()
 			MonkeyHub.detach()
 		end,
@@ -1057,6 +1167,17 @@ function MonkeyHub.detach()
 	end
 	pcall(Flight.stop)
 	pcall(Misc.setFullbright, false)
+	if Misc.baseSpeed and Misc.speedHumanoid and Misc.speedHumanoid.Parent then
+		pcall(function()
+			Misc.speedHumanoid.WalkSpeed = Misc.baseSpeed
+		end)
+	end
+	Misc.baseSpeed, Misc.speedHumanoid = nil, nil
+	local _, humanoid = getCharacter()
+	if humanoid then
+		pcall(humanoid.Move, humanoid, Vector3.zero)
+	end
+	Chest.target, Chest.planning = nil, false
 	maid:clean()
 	if Library then
 		pcall(Library.Unload, Library)
@@ -1075,7 +1196,14 @@ function MonkeyHub.init()
 	buildUi()
 	Esp.init()
 	Misc.init()
-	maid:give(runService.RenderStepped:Connect(Esp.render))
+	maid:give(runService.RenderStepped:Connect(function()
+		local ok, err = pcall(Esp.render)
+		if not ok and not state.espWarned then
+			state.espWarned = true
+			warn("[MonkeyHub] ESP paused after render error: " .. tostring(err))
+			pcall(Esp.hide, 1)
+		end
+	end))
 	local elapsed = 0
 	maid:give(runService.Heartbeat:Connect(function(dt)
 		elapsed += dt
@@ -1097,7 +1225,7 @@ function MonkeyHub.init()
 			MonkeyHub.detach()
 		end
 	end))
-	Library:Notify("Monkey Hub loaded. Use the Rayfield pill to hide or show the menu.", 5)
+	Library:Notify("Monkey Hub loaded.", 5)
 end
 
 if shared.MonkeyHub then
@@ -1105,4 +1233,10 @@ if shared.MonkeyHub then
 end
 shared.MonkeyHub = MonkeyHub
 
-xpcall(MonkeyHub.init, onInitError)
+if game.PlaceId == LOBBY_PLACE_ID then
+	warn("[MonkeyHub] Lobby detected. Press PLAY, wait until the match loads, then execute MonkeyHub again.")
+elseif game.PlaceId ~= MATCH_PLACE_ID then
+	warn("[MonkeyHub] Unsupported place ID: " .. tostring(game.PlaceId))
+else
+	xpcall(MonkeyHub.init, onInitError)
+end
