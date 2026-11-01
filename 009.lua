@@ -57,6 +57,9 @@ local CONFIG = {
 	MIN_FIRE_GAP = 0.06,
 	BOSS_DISTANCE = 90,
 	BOSS_RETREAT_DISTANCE = 120,
+	HAZARD_MARGIN = 14,
+	HAZARD_LOOKAHEAD = 0.9,
+	ENEMY_SCAN_RADIUS = 120,
 	RETREAT_HEALTH = 0.6,
 	SKIP_METER_LIMIT = 0.85,
 	SKIP_ENEMY_LIMIT = 400,
@@ -96,6 +99,10 @@ local state = {
 	lastTurret = 0,
 	lastUlt = 0,
 	lastStatus = 0,
+	lastDefenseScan = 0,
+	defenseEnemyPoint = nil,
+	defenseEnemyDistance = math.huge,
+	defenseDirection = nil,
 	errors = 0,
 }
 local sightParams = RaycastParams.new()
@@ -332,7 +339,7 @@ local function hookHazards()
 end
 
 local function dangerous(point, serverNow)
-	local margin = state.bossId and 16 or 10
+	local margin = state.bossId and CONFIG.HAZARD_MARGIN + 4 or CONFIG.HAZARD_MARGIN
 	if state.bossPoint then
 		local delta = point - state.bossPoint
 		if Vector3.new(delta.X, 0, delta.Z).Magnitude < (state.requiredBossDistance or CONFIG.BOSS_DISTANCE) - 8 then
@@ -398,7 +405,7 @@ local function dodge(root, destination)
 		return destination
 	end
 	local serverNow = workspace:GetServerTimeNow()
-	local ahead = root.Position + root.AssemblyLinearVelocity * 0.7
+	local ahead = root.Position + root.AssemblyLinearVelocity * CONFIG.HAZARD_LOOKAHEAD
 	if not dangerous(root.Position, serverNow) and not dangerous(ahead, serverNow) and not dangerous(destination, serverNow)
 		and safePath(root.Position, destination, serverNow) then
 		return destination
@@ -793,27 +800,69 @@ local function autoTurret(root, now)
 	Game.placement:Activate("Turret")
 end
 
+local function updateDefenseTargets(root, now)
+	if now - (state.lastDefenseScan or 0) < 0.12 then
+		return
+	end
+	state.lastDefenseScan = now
+	local count = state.skillEnemyCount or 0
+	local nearestPoint, nearestDistance = nil, math.huge
+	local repulsion = Vector3.zero
+	local preferredDistance = math.max(8, Options.KiteDistance and Options.KiteDistance.Value or 22)
+	local scanRadius = math.max(CONFIG.ENEMY_SCAN_RADIUS, preferredDistance * 2)
+	for i = 1, count do
+		if skillCrowd.hp[i] <= 0 or skillCrowd.id[i] == state.bossId then
+			continue
+		end
+		local point = crowdPoint(skillCrowd, i)
+		local delta = root.Position - point
+		local flat = Vector3.new(delta.X, 0, delta.Z)
+		local distance = flat.Magnitude
+		if distance < nearestDistance then
+			nearestPoint, nearestDistance = point, distance
+		end
+		if distance > 0.1 and distance < scanRadius then
+			local pressure = math.clamp((scanRadius - distance) / scanRadius, 0, 1)
+			repulsion += flat.Unit * pressure * pressure
+		end
+	end
+	state.defenseEnemyPoint = nearestPoint
+	state.defenseEnemyDistance = nearestDistance
+	state.defenseDirection = repulsion.Magnitude > 0.05 and repulsion.Unit or nil
+end
+
 local function kite(humanoid, root)
 	if enabled("FlightOrbit") then
 		return
 	end
 	local destination
-	if enabled("Kite") and state.enemyPoint then
-		local distance = Options.KiteDistance.Value
-		local delta = root.Position - state.enemyPoint
-		local flat = Vector3.new(delta.X, 0, delta.Z)
-		if flat.Magnitude < distance then
-			local away = flat.Magnitude > 0.1 and flat.Unit or root.CFrame.LookVector
-			destination = root.Position + away * (distance - flat.Magnitude + 6)
+	local escape = Vector3.zero
+	local escapeDistance = 0
+	if enabled("Kite") and state.defenseEnemyPoint and state.defenseEnemyDistance < math.max(8, Options.KiteDistance.Value) then
+		local away = state.defenseDirection
+		if not away then
+			local delta = root.Position - state.defenseEnemyPoint
+			local flat = Vector3.new(delta.X, 0, delta.Z)
+			away = flat.Magnitude > 0.1 and flat.Unit or -root.CFrame.LookVector
 		end
+		local spacing = math.clamp(Options.KiteDistance.Value - state.defenseEnemyDistance + 10, 10, Options.KiteDistance.Value)
+		escape += away * spacing
+		escapeDistance = math.max(escapeDistance, spacing)
 	end
 	if state.bossPoint then
 		local delta = root.Position - state.bossPoint
 		local flat = Vector3.new(delta.X, 0, delta.Z)
-		if flat.Magnitude < state.requiredBossDistance then
-			local away = flat.Magnitude > 0.1 and flat.Unit or root.CFrame.LookVector
-			destination = state.bossPoint + away * state.requiredBossDistance
+		local distance = flat.Magnitude
+		local required = state.requiredBossDistance or CONFIG.BOSS_DISTANCE
+		if distance < required then
+			local away = flat.Magnitude > 0.1 and flat.Unit or -root.CFrame.LookVector
+			local spacing = math.clamp(required - distance + 14, 14, required)
+			escape += away * spacing * 2.5
+			escapeDistance = math.max(escapeDistance, spacing)
 		end
+	end
+	if escape.Magnitude > 0.05 then
+		destination = root.Position + escape.Unit * math.max(escapeDistance, 12)
 	end
 	local safe = dodge(root, destination or root.Position)
 	if destination or state.avoiding then
@@ -865,7 +914,9 @@ function Chest.plan(chest, root)
 end
 
 function Chest.step(humanoid, root, now)
-	if not enabled("AutoChest") or state.bossId or (state.healthRatio or 1) < 0.6 or enabled("FlightOrbit") then
+	local spacing = Options.KiteDistance and Options.KiteDistance.Value or 22
+	local enemyPressure = enabled("Kite") and state.defenseEnemyDistance < spacing * 1.35
+	if not enabled("AutoChest") or state.bossId or enemyPressure or (state.healthRatio or 1) < 0.6 or enabled("FlightOrbit") then
 		Chest.target = nil
 		return false
 	end
@@ -1193,6 +1244,7 @@ local function update()
 	end
 	survival(root, humanoid, now)
 	adaptiveSkip(root, humanoid, now)
+	updateDefenseTargets(root, now)
 	upgrades()
 	useClassSkills(root, humanoid, now)
 	useUltimate(root, humanoid, now)
@@ -1682,13 +1734,13 @@ local function buildUi()
 	addToggle(combatTab, "AutoUltimate", { Text = "Use Ultimate Automatically", Default = false })
 	addToggle(combatTab, "AutoTurret", { Text = "Deploy Turret Automatically", Default = false })
 	combatTab:CreateSection({ name = "Weapon" })
-	addToggle(combatTab, "RapidFire", { Text = "Rapid Fire (Advanced)", Default = false })
+	addToggle(combatTab, "RapidFire", { Text = "Rapid Fire (Patched)", Default = false, Description = "Applies the patched fire-rate adjustment." })
 	addSlider(combatTab, "RapidFireMult", { Text = "Fire Rate Multiplier", Default = 2, Min = 1, Max = 5, Increment = 0.5, Suffix = "x" })
 
 	local survivalTab = window:CreateTab({ name = "Survival" })
 	survivalTab:CreateSection({ name = "Defense" })
-	addToggle(survivalTab, "AvoidHazards", { Text = "Avoid Boss Attacks and Acid", Default = false })
-	addToggle(survivalTab, "Kite", { Text = "Keep Distance from Enemies", Default = false })
+	addToggle(survivalTab, "AvoidHazards", { Text = "Avoid Boss Attacks and Acid", Default = false, Description = "Finds a clear route around active boss telegraphs and acid zones." })
+	addToggle(survivalTab, "Kite", { Text = "Keep Safe Distance from Enemies", Default = false, Description = "Moves away from nearby enemy groups and gives boss threats higher priority." })
 	addSlider(survivalTab, "KiteDistance", { Text = "Enemy Distance", Default = 22, Min = 8, Max = 60, Suffix = " studs" })
 	survivalTab:CreateSection({ name = "Flight" })
 	addToggle(survivalTab, "FlightOrbit", { Text = "Orbit Flight (Advanced)", Default = false })
