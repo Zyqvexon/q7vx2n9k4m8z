@@ -65,6 +65,7 @@ local window = Rayfield:CreateWindow({
         customFolder = "TapSimulatorReborn_" .. tostring(services.Players.LocalPlayer.UserId)
     }
 })
+window:ChangeTheme({LiveAnimation = false})
 runtime:AddCleanup(function()
     if not window.unloaded then window:Unload() end
 end)
@@ -95,17 +96,17 @@ local utils = {
     }
 }
 local tabs = {}
-tabs.main = window:CreateTab({name = "Main"})
-tabs.hatching = window:CreateTab({name = "Hatching"})
+tabs.main = window:CreateTab({name = "Home"})
+tabs.hatching = window:CreateTab({name = "Eggs"})
 
 tabs.pets = window:CreateTab({name = "Pets"})
-tabs.crafting = window:CreateTab({name = "Pet Crafting"})
+tabs.crafting = window:CreateTab({name = "Crafting"})
 tabs.enchanting = window:CreateTab({name = "Enchanting"})
 
-tabs.teleport = window:CreateTab({name = "Teleports"})
-tabs.misc = window:CreateTab({name = "Misc"})
+tabs.teleport = window:CreateTab({name = "Travel"})
+tabs.misc = window:CreateTab({name = "Tools"})
 
-tabs.config = window:CreateTab({name = "Configuration"})
+tabs.config = window:CreateTab({name = "Settings"})
 
 local function selectedList(value)
     if type(value) == "table" then return value end
@@ -177,12 +178,43 @@ function utils.remote(group, name, ...)
 end
 
 utils.activityConsole = tabs.main:CreateConsole({
-    name = "Live activity",
-    text = "Ready. Feature updates will appear here.",
+    name = "Live Activity",
+    text = "Waiting for activity...",
     height = 138,
     follow = true,
     maxLines = 60
 })
+
+local activityNames = {
+    Tap = "Auto Tap",
+    Rebirth = "Auto Rebirth",
+    Skills = "Skill Tree",
+    Islands = "Island Unlocks",
+    Rewards = "Reward Collection",
+    RewardPopup = "Reward Popups",
+    Chests = "Chest Collection",
+    Performance = "Optimization",
+    Hatch = "Egg Hatching",
+    Cleanup = "Pet Cleanup",
+    Team = "Team Setup",
+    Treats = "Pet Feeding",
+    Golden = "Golden Machine",
+    Diamond = "Diamond Machine",
+    Shiny = "Rainbow Machine",
+    Stars = "Star Collection",
+    Enchant = "Pet Enchanting",
+    Travel = "Island Travel",
+    Arena = "Colosseum",
+    Memory = "Memory Match",
+    Dig = "Digging",
+    Boosts = "Boost Potions",
+    Potions = "Potion Machine",
+    Shrine = "Shrine Blessing",
+    Totems = "Totems",
+    Relic = "Relics",
+    Configuration = "Profiles",
+    Theme = "Theme"
+}
 
 function utils.message(key, value)
     local status = tostring(value or "Idle")
@@ -195,7 +227,7 @@ function utils.message(key, value)
     if previous == status and now - last < 2 then return end
     utils.activityTimes[key] = now
     pcall(function()
-        utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(key) .. ": " .. status)
+        utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(activityNames[key] or key) .. ": " .. status)
     end)
 end
 
@@ -1417,10 +1449,10 @@ function utils.hideHatch(enabled)
     utils.setting("HatchAnimation", 3)
 end
 
-utils.section(tabs.main, "Clicking")
+utils.section(tabs.main, "Tapping")
 utils.job(tabs.main, "Auto Tap", "Tap", utils.modules.gameConfig.ManualTapInterval, utils.tap)
-utils.controls.HideClicks = tabs.main:CreateToggle({name = "Hide Clicks", value = false, flag = "Visual.HideTaps", callback = utils.hideClicks})
-utils.section(tabs.main, "Rebirths")
+utils.controls.HideClicks = tabs.main:CreateToggle({name = "Hide Tap Effects", value = false, flag = "Visual.HideTaps", callback = utils.hideClicks})
+utils.section(tabs.main, "Rebirth")
 tabs.main.rebirthValues, tabs.main.rebirthMap = {"Max"}, {}
 function utils.refreshRebirths()
     local values, map = {"Max"}, {}
@@ -1433,7 +1465,7 @@ function utils.refreshRebirths()
     tabs.main.rebirthValues, tabs.main.rebirthMap = values, map
 end
 utils.refreshRebirths()
-tabs.main.rebirthDropdown = tabs.main:CreateDropdown({name = "Select Rebirth Amount", options = tabs.main.rebirthValues, value = "Max", flag = "Farm.RebirthAmount",
+tabs.main.rebirthDropdown = tabs.main:CreateDropdown({name = "Rebirth Amount", options = tabs.main.rebirthValues, value = "Max", flag = "Farm.RebirthAmount",
     callback = function(value)
         value = selectedOne(value)
         utils.settings.farm.Rebirth = value == "Max" and "Maximum" or tabs.main.rebirthMap[value] or "Maximum"
@@ -1441,16 +1473,16 @@ tabs.main.rebirthDropdown = tabs.main:CreateDropdown({name = "Select Rebirth Amo
 })
 utils.job(tabs.main, "Auto Rebirth", "Rebirth", 0.5, utils.rebirth)
 utils.section(tabs.main, "Progression")
-utils.job(tabs.main, "Auto Skill Tree", "Skills", 0.5, utils.skills)
+utils.job(tabs.main, "Auto Upgrade Skills", "Skills", 0.5, utils.skills)
 utils.job(tabs.main, "Auto Unlock Islands", "Islands", 5, utils.islands)
-utils.job(tabs.main, "Auto Claim Rewards", "Rewards", 20, utils.rewards)
-utils.job(tabs.main, "Auto Close Rewards", "RewardPopup", 0.3, utils.closeRewards)
-utils.job(tabs.main, "Auto Claim Chests", "Chests", 30, utils.chests)
+utils.job(tabs.main, "Auto Collect Rewards", "Rewards", 20, utils.rewards)
+utils.job(tabs.main, "Auto Dismiss Reward Popups", "RewardPopup", 0.3, utils.closeRewards)
+utils.job(tabs.main, "Auto Collect Chests", "Chests", 30, utils.chests)
 utils.label(tabs.main, "Rebirth")
-utils.section(tabs.main, "Performance")
-utils.action(tabs.main, "Anti Lag", "Performance", utils.antiLag)
+utils.section(tabs.main, "Optimization")
+utils.action(tabs.main, "Optimize Visuals", "Performance", utils.antiLag)
 utils.label(tabs.main, "Performance")
-utils.section(tabs.hatching, "Hatching")
+utils.section(tabs.hatching, "Egg Hatching")
 utils.eggNames, utils.eggMap = {}, {}
 for _, egg in ipairs(utils.sortedEggs()) do
     local label = egg.Name .. " - " .. utils.formatNumber(egg.Price)
@@ -1458,14 +1490,14 @@ for _, egg in ipairs(utils.sortedEggs()) do
     utils.eggMap[label] = egg.Name
 end
 local defaultEggLabel = "Basic - " .. utils.formatNumber(utils.modules.eggs.Basic.Price)
-tabs.hatching:CreateDropdown({name = "Select Egg", options = utils.eggNames, value = defaultEggLabel, flag = "Hatch.Egg",
+tabs.hatching:CreateDropdown({name = "Egg Selection", options = utils.eggNames, value = defaultEggLabel, flag = "Hatch.Egg",
     callback = function(value)
         value = selectedOne(value)
         utils.settings.farm.Egg = utils.eggMap[value] or (utils.modules.eggs[value] and value) or "Basic"
         utils.refreshEggDelete()
     end
 })
-tabs.hatching:CreateDropdown({name = "Hatch Amount", options = {"1x", "3x", "8x", "Max"}, value = "Max", flag = "Hatch.Amount",
+tabs.hatching:CreateDropdown({name = "Hatch Quantity", options = {"1x", "3x", "8x", "Max"}, value = "Max", flag = "Hatch.Amount",
     callback = function(value)
         value = selectedOne(value)
         utils.settings.farm.HatchCount = value == "Max" and 8 or tonumber(value:match("%d+")) or 3
@@ -1473,11 +1505,11 @@ tabs.hatching:CreateDropdown({name = "Hatch Amount", options = {"1x", "3x", "8x"
 })
 utils.settings.farm.HatchCount = 8
 utils.job(tabs.hatching, "Auto Hatch", "Hatch", 0.2, utils.hatchEgg)
-tabs.hatching:CreateToggle({name = "Hide Hatch Animation", value = false, flag = "Visual.HideHatch", callback = utils.hideHatch})
+tabs.hatching:CreateToggle({name = "Skip Hatch Animations", value = false, flag = "Visual.HideHatch", callback = utils.hideHatch})
 utils.label(tabs.hatching, "Hatch")
-utils.section(tabs.hatching, "Egg Auto Delete")
+utils.section(tabs.hatching, "Auto-Delete Rules")
 local eggDeleteValues, eggDeleteSelected = utils.refreshEggDelete()
-tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Select Pets to Delete", options = eggDeleteValues, value = eggDeleteSelected, multiSelect = true,
+tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Pets to Auto-Delete", options = eggDeleteValues, value = eggDeleteSelected, multiSelect = true,
     callback = function(values)
         local validKeys = {}
         for _, keys in pairs(tabs.hatching.deleteRarityKeys or {}) do
@@ -1491,27 +1523,27 @@ tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Select Pets
         utils.remote("Egg", "AutoDeleteRequested", {Egg = utils.settings.farm.Egg, Entries = entries})
     end
 })
-tabs.hatching.rarityDropdown = tabs.hatching:CreateDropdown({name = "Select Rarities to Delete", options = utils.rarities or {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}, value = tabs.hatching.deleteRarities, multiSelect = true,
+tabs.hatching.rarityDropdown = tabs.hatching:CreateDropdown({name = "Rarities to Auto-Delete", options = utils.rarities or {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}, value = tabs.hatching.deleteRarities, multiSelect = true,
     callback = utils.deleteEggRarities
 })
-utils.section(tabs.pets, "Team")
-utils.dropdown(tabs.pets, "Select Team Focus", utils.settings.pets, "Team", {"Clicks", "Gems", "Luck"}, "Pets.Team")
-utils.job(tabs.pets, "Auto Equip Best", "Team", 10, utils.equip)
-utils.action(tabs.pets, "Equip Best", "Team", utils.equip)
-utils.job(tabs.pets, "Auto Feed Treats", "Treats", 10, utils.feed)
-utils.section(tabs.pets, "Auto Delete")
+utils.section(tabs.pets, "Team Setup")
+utils.dropdown(tabs.pets, "Team Focus", utils.settings.pets, "Team", {"Clicks", "Gems", "Luck"}, "Pets.Team")
+utils.job(tabs.pets, "Auto Equip Best Team", "Team", 10, utils.equip)
+utils.action(tabs.pets, "Equip Best Team", "Team", utils.equip)
+utils.job(tabs.pets, "Auto Feed Pets", "Treats", 10, utils.feed)
+utils.section(tabs.pets, "Pet Cleanup")
 utils.rarities = {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}
 local deleteRarities = table.clone(utils.rarities)
 table.insert(deleteRarities, 1, "All Rarities")
-utils.multi(tabs.pets, "Select Rarities", utils.settings.pets, "Rarities", deleteRarities, "Pets.Rarities")
-utils.multi(tabs.pets, "Select Variants", utils.settings.pets, "Tiers", {"All Variants", "Normal", "Golden", "Diamond", "Rainbow"}, "Pets.Variants")
-tabs.pets.deleteNames = tabs.pets:CreateDropdown({name = "Select Pets", options = utils.inventoryPetNames(), value = {}, multiSelect = true, flag = "Pets.DeleteNames",
+utils.multi(tabs.pets, "Rarities to Delete", utils.settings.pets, "Rarities", deleteRarities, "Pets.Rarities")
+utils.multi(tabs.pets, "Variants to Delete", utils.settings.pets, "Tiers", {"All Variants", "Normal", "Golden", "Diamond", "Rainbow"}, "Pets.Variants")
+tabs.pets.deleteNames = tabs.pets:CreateDropdown({name = "Pets to Delete", options = utils.inventoryPetNames(), value = {}, multiSelect = true, flag = "Pets.DeleteNames",
     callback = function(values)
         table.clear(utils.settings.pets.Names)
         for _, name in ipairs(selectedList(values)) do if type(name) == "string" then utils.settings.pets.Names[name] = true end end
     end
 })
-utils.job(tabs.pets, "Auto Delete Pets", "Cleanup", 15, utils.sellPets)
+utils.job(tabs.pets, "Auto-Delete Pets", "Cleanup", 15, utils.sellPets)
 utils.label(tabs.pets, "Cleanup")
 tabs.crafting.petDropdowns = {}
 function utils.petNames(tier)
@@ -1524,9 +1556,9 @@ function utils.petNames(tier)
 end
 for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Golden"}, {"Rainbow", "Shiny", "Diamond"}}) do
     local title, machine, tier = row[1], row[2], row[3]
-    utils.section(tabs.crafting, title .. " Pets")
+    utils.section(tabs.crafting, title .. " Machine")
     if machine == "Shiny" then
-        tabs.crafting:CreateDropdown({name = "Select Time", options = {"5h - 2 Pets", "2.5h - 3 Pets", "1h - 4 Pets", "30s - 5 Pets"}, value = "30s - 5 Pets", flag = "Craft.RainbowAmount",
+        tabs.crafting:CreateDropdown({name = "Rainbow Craft Time", options = {"5h - 2 Pets", "2.5h - 3 Pets", "1h - 4 Pets", "30s - 5 Pets"}, value = "30s - 5 Pets", flag = "Craft.RainbowAmount",
             callback = function(value) value = selectedOne(value); utils.settings.pets.RainbowCount = tonumber(value:match("(%d+) Pets")) or 5 end})
     else
         local choices, amounts = {}, {}
@@ -1535,16 +1567,16 @@ for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Go
             table.insert(choices, choice)
             amounts[choice] = count
         end
-        tabs.crafting:CreateDropdown({name = "Select Chance", options = choices, value = choices[#choices], flag = "Craft." .. title .. "Amount",
+        tabs.crafting:CreateDropdown({name = "Craft Success Chance", options = choices, value = choices[#choices], flag = "Craft." .. title .. "Amount",
             callback = function(value) value = selectedOne(value); utils.settings.pets[title .. "Count"] = amounts[value] or #choices end})
     end
-    tabs.crafting.petDropdowns[tier] = utils.multi(tabs.crafting, "Select " .. title .. " Pets", utils.settings.pets, title .. "Pets", utils.petNames(tier), "Craft." .. title .. "Pets")
+    tabs.crafting.petDropdowns[tier] = utils.multi(tabs.crafting, "Pets for " .. title, utils.settings.pets, title .. "Pets", utils.petNames(tier), "Craft." .. title .. "Pets")
     utils.job(tabs.crafting, "Auto Craft " .. title, machine, 8, function() return utils.craft(machine) end)
     utils.label(tabs.crafting, machine)
 end
-utils.job(tabs.crafting, "Auto Collect Shiny Stars", "Stars", 5, utils.collectStars)
-utils.section(tabs.enchanting, "Enchanting")
-utils.multi(tabs.enchanting, "Select Enchants", utils.settings.enchant, "Traits", utils.keys(utils.modules.enchants.Enchants), "Enchant.Traits")
+utils.job(tabs.crafting, "Auto Collect Stars", "Stars", 5, utils.collectStars)
+utils.section(tabs.enchanting, "Pet Enchanting")
+utils.multi(tabs.enchanting, "Enchantments to Apply", utils.settings.enchant, "Traits", utils.keys(utils.modules.enchants.Enchants), "Enchant.Traits")
 function utils.enchantPets()
     local catalog = {}
     for name, pet in pairs(utils.modules.launchPets) do catalog[name] = pet end
@@ -1591,42 +1623,42 @@ function utils.selectEnchantPets(values)
     end
 end
 
-tabs.enchanting.petDropdown = tabs.enchanting:CreateDropdown({name = "Select Pets", options = utils.enchantPets(), value = {"Equipped Pets"}, multiSelect = true, flag = "Enchant.Pets",
+tabs.enchanting.petDropdown = tabs.enchanting:CreateDropdown({name = "Pets to Enchant", options = utils.enchantPets(), value = {"Equipped Pets"}, multiSelect = true, flag = "Enchant.Pets",
     callback = utils.selectEnchantPets})
-utils.job(tabs.enchanting, "Auto Enchant", "Enchant", 2, utils.enchant)
+utils.job(tabs.enchanting, "Auto Enchant Pets", "Enchant", 2, utils.enchant)
 utils.label(tabs.enchanting, "Enchant")
-utils.section(tabs.teleport, "Islands")
+utils.section(tabs.teleport, "Island Travel")
 utils.settings.destination = {Island = "Spawn", OnJoin = false}
 utils.islandNames = {"Spawn"}
 for _, island in ipairs(utils.sortedIslands()) do table.insert(utils.islandNames, island.Name) end
-utils.dropdown(tabs.teleport, "Select Island", utils.settings.destination, "Island", utils.islandNames, "Travel.Island")
+utils.dropdown(tabs.teleport, "Island Destination", utils.settings.destination, "Island", utils.islandNames, "Travel.Island")
 function utils.teleport()
     assert(not utils.travel.Owner, "Character busy")
     utils.remote("Island", "Travel", {Island = utils.settings.destination.Island, Source = "Menu"})
     return utils.settings.destination.Island
 end
-utils.action(tabs.teleport, "Teleport", "Travel", utils.teleport)
-tabs.teleport:CreateToggle({name = "Teleport on Join", value = false, flag = "Travel.OnJoin", callback = function(enabled)
+utils.action(tabs.teleport, "Travel to Island", "Travel", utils.teleport)
+tabs.teleport:CreateToggle({name = "Travel on Join", value = false, flag = "Travel.OnJoin", callback = function(enabled)
     utils.settings.destination.OnJoin = enabled
     if enabled then runtime:Spawn(function() task.wait(1); if runtime.Alive and utils.settings.destination.OnJoin then pcall(utils.teleport) end end) end
 end})
 utils.label(tabs.teleport, "Travel")
-utils.section(tabs.misc, "Minigames")
-utils.job(tabs.misc, "Auto Colosseum", "Arena", 20, utils.colosseum, function()
+utils.section(tabs.misc, "Mini-Games")
+utils.job(tabs.misc, "Auto Play Colosseum", "Arena", 20, utils.colosseum, function()
     if utils.arena.Active then pcall(utils.remote, "Colosseum", "EndWaveDefense") end
     utils.arena.Active = false
 end)
-utils.job(tabs.misc, "Auto Memory Match", "Memory", 20, utils.memoryGame)
+utils.job(tabs.misc, "Auto Play Memory Match", "Memory", 20, utils.memoryGame)
 utils.job(tabs.misc, "Auto Dig", "Dig", 20, utils.digGame)
 utils.label(tabs.misc, "Arena")
 utils.label(tabs.misc, "Memory")
 utils.label(tabs.misc, "Dig")
 utils.section(tabs.misc, "Potions")
-utils.multi(tabs.misc, "Select Potion Types", utils.settings.boosts, "Types", {"Coins", "Gems", "Luck", "OctoHatch", "GoldenHatch", "EnchantAnimSpeed"}, "Boosts.Types")
-utils.job(tabs.misc, "Auto Use Potions", "Boosts", 15, utils.potions)
-utils.dropdown(tabs.misc, "Select Potion", utils.settings.boosts, "Brew", utils.modules.brew.Potions, "Boosts.Brew")
-utils.job(tabs.misc, "Auto Potion Machine", "Potions", 20, utils.potionMachine)
-utils.dropdown(tabs.misc, "Select Potion Amount", utils.settings.boosts, "Bundle", {"1", "3", "10"}, "Boosts.Bundle")
+utils.multi(tabs.misc, "Potion Types", utils.settings.boosts, "Types", {"Coins", "Gems", "Luck", "OctoHatch", "GoldenHatch", "EnchantAnimSpeed"}, "Boosts.Types")
+utils.job(tabs.misc, "Auto Use Boost Potions", "Boosts", 15, utils.potions)
+utils.dropdown(tabs.misc, "Potion Selection", utils.settings.boosts, "Brew", utils.modules.brew.Potions, "Boosts.Brew")
+utils.job(tabs.misc, "Auto Craft Potions", "Potions", 20, utils.potionMachine)
+utils.dropdown(tabs.misc, "Potion Craft Quantity", utils.settings.boosts, "Bundle", {"1", "3", "10"}, "Boosts.Bundle")
 utils.action(tabs.misc, "Buy Potions", "Potions", function()
     return utils.trip("Potions", workspace.Map1:FindFirstChild("PotionMachine"), function()
         utils.remote("PotionMachine", "Buy", tonumber(utils.settings.boosts.Bundle))
@@ -1634,62 +1666,92 @@ utils.action(tabs.misc, "Buy Potions", "Potions", function()
     end)
 end)
 utils.section(tabs.misc, "Boosts")
-utils.dropdown(tabs.misc, "Select Blessing", utils.settings.boosts, "Shrine", {"Luck", "Golden", "AutoClicker"}, "Boosts.Shrine")
-utils.job(tabs.misc, "Auto Shrine", "Shrine", 30, utils.shrine)
-utils.job(tabs.misc, "Auto Totems", "Totems", 30, utils.totems)
+utils.dropdown(tabs.misc, "Shrine Blessing", utils.settings.boosts, "Shrine", {"Luck", "Golden", "AutoClicker"}, "Boosts.Shrine")
+utils.job(tabs.misc, "Auto Claim Shrine Blessing", "Shrine", 30, utils.shrine)
+utils.job(tabs.misc, "Auto Activate Totems", "Totems", 30, utils.totems)
 utils.relicNames = {"Automatic"}
 for _, name in ipairs(utils.modules.relics.Order) do table.insert(utils.relicNames, name) end
-utils.dropdown(tabs.misc, "Select Relic", utils.settings.boosts, "Relic", utils.relicNames, "Boosts.Relic")
-utils.job(tabs.misc, "Auto Relic", "Relic", 20, utils.relic)
+utils.dropdown(tabs.misc, "Relic Selection", utils.settings.boosts, "Relic", utils.relicNames, "Boosts.Relic")
+utils.job(tabs.misc, "Auto Claim Relics", "Relic", 20, utils.relic)
 utils.settings.config = {Name = "Default"}
 function utils.configName()
     local name = tostring(utils.settings.config.Name or ""):match("^%s*(.-)%s*$")
     assert(type(name) == "string" and #name > 0 and #name <= 48 and name:match("^[%w _%-]+$"), "Enter a valid configuration name")
     return name
 end
-tabs.config:CreateInput({name = "Configuration Name", value = "Default", placeholder = "Enter a config name", flag = "Config.Name", callback = function(value)
+utils.section(tabs.config, "Profile Management")
+tabs.config:CreateInput({name = "Profile Name", value = "Default", placeholder = "Enter a profile name", flag = "Config.Name", callback = function(value)
     utils.settings.config.Name = value
 end})
-utils.action(tabs.config, "Save Configuration", "Configuration", function()
+utils.action(tabs.config, "Save Profile", "Configuration", function()
     local name = utils.configName()
     local success = window:Save(name)
     assert(success, "Rayfield could not save this configuration in the current environment")
     return "Saved " .. name
 end)
-utils.action(tabs.config, "Load Configuration", "Configuration", function()
+utils.action(tabs.config, "Load Profile", "Configuration", function()
     local name = utils.configName()
     local success = window:Load(name)
     assert(success, "Configuration not found or loading is unavailable")
     return "Loaded " .. name
 end)
-utils.action(tabs.config, "Delete Configuration", "Configuration", function()
+utils.action(tabs.config, "Delete Profile", "Configuration", function()
     local name = utils.configName()
     local success = window:DeleteConfig(name)
     assert(success, "Could not delete configuration " .. name)
     return "Deleted " .. name
 end)
-utils.action(tabs.config, "List Configurations", "Configuration", function()
+utils.action(tabs.config, "Browse Profiles", "Configuration", function()
     local names = window:ListConfigs() or {}
     table.sort(names)
     local content = #names > 0 and table.concat(names, ", ") or "No saved configurations found."
-    notify("Saved configurations", content, 6)
+    notify("Saved profiles", content, 6)
     return tostring(#names) .. " configuration(s)"
 end)
-tabs.config:CreateDropdown({name = "Theme", options = {"default", "cobalt", "ember", "amethyst", "frost", "rose"}, value = "ember", forgetState = true,
+utils.section(tabs.config, "Appearance")
+local themeOptions = {"default", "cobalt", "ember", "amethyst", "frost", "rose"}
+local themeState = {
+    Selected = "ember",
+    Active = "ember",
+    LastAppliedAt = -math.huge,
+    Applying = false
+}
+tabs.config:CreateDropdown({name = "Theme Preset", options = themeOptions, value = themeState.Selected, forgetState = true,
     callback = function(value)
         local themeName = selectedOne(value)
-        if themeName then window:ChangeTheme(themeName) end
+        if type(themeName) == "string" and table.find(themeOptions, themeName) then
+            themeState.Selected = themeName
+        end
     end
 })
-utils.action(tabs.config, "Stop All Automations", "Session", function()
+utils.action(tabs.config, "Apply Theme", "Theme", function()
+    local themeName = themeState.Selected
+    assert(table.find(themeOptions, themeName), "Select a valid theme preset")
+    if themeName == themeState.Active then return themeName .. " is already active" end
+    if themeState.Applying then return "A theme change is already running" end
+    local now = os.clock()
+    if now - themeState.LastAppliedAt < 2 then return "Wait before applying another theme" end
+    themeState.Applying = true
+    local success, result = pcall(function()
+        window:ChangeTheme(themeName)
+        window:ChangeTheme({LiveAnimation = false})
+    end)
+    themeState.Applying = false
+    if not success then error(result) end
+    themeState.Active = themeName
+    themeState.LastAppliedAt = os.clock()
+    return "Applied " .. themeName
+end)
+utils.section(tabs.config, "Session Controls")
+utils.action(tabs.config, "Stop All Tasks", "Session", function()
     utils.stop()
     return "All automations stopped"
 end)
-utils.action(tabs.config, "Unload Script", "Session", function()
+utils.action(tabs.config, "Unload Hub", "Session", function()
     runtime:Destroy()
     return "Unloaded"
 end)
-utils.label(tabs.config, "Configuration")
+utils.label(tabs.config, "Profiles")
 
 window:Toast({title = "[✨] Tap Simulator REBORN", subtitle = "by Ovei", duration = 4})
 
