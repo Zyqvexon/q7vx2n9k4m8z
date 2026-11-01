@@ -2,15 +2,28 @@ if not shared then
 	return warn("No shared, no script.")
 end
 
+loadstring("getfenv().LPH_NO_VIRTUALIZE = function(...) return ... end")()
+loadstring("getfenv().PP_SCRAMBLE_NUM = function(...) return ... end")()
+loadstring("getfenv().PP_SCRAMBLE_STR = function(...) return ... end")()
+loadstring("getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end")()
+
+---@module MonkeyHub
+-- Survive a Million Monkeys hub. Every server-bound action goes through the game's own
+-- client code or a remote the game's own UI fires, with the same arguments, gated by the
+-- same attributes the UI reads, and throttled to button-press rates.
 local MonkeyHub = {}
 
+-- Maid: owns every connection, instance, drawing and cleanup function so detach() leaves nothing.
 local Maid = {}
 Maid.__index = Maid
 
+---@return table
 function Maid.new()
 	return setmetatable({ tasks = {} }, Maid)
 end
 
+---@param task any
+---@return any
 function Maid:give(task)
 	table.insert(self.tasks, task)
 	return task
@@ -22,7 +35,7 @@ function Maid:clean()
 		self.tasks[index] = nil
 		local kind = typeof(task)
 		if kind == "RBXScriptConnection" then
-			pcall(task.Disconnect, task)
+			task:Disconnect()
 		elseif kind == "Instance" then
 			pcall(task.Destroy, task)
 		elseif kind == "function" then
@@ -35,18 +48,22 @@ function Maid:clean()
 	end
 end
 
+-- Constants.
 local LOBBY_PLACE_ID = 99409088950210
 local MATCH_PLACE_ID = 115317125060158
 
 local CONFIG = {
+	RAYFIELD_URL = "https://sirius.menu/gen2",
+	SETTINGS_FILE = "MonkeyHub/settings/config.json",
 	REEXEC_SOURCE = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/primelyn123-jpg/monkey-hub/main/MonkeyHub.lua"))()',
 	READY_TIMEOUT = 90,
-	TICK_RATE = 0.12,
-	BOSS_TICK_RATE = 0.08,
+	TICK_RATE = 0.08,
+	BOSS_TICK_RATE = 0.03,
 	SCAN_MAX = 4096,
 	SCAN_RADIUS = 2000,
-	ESP_MAX = 90,
+	ESP_MAX = 150,
 	ESP_RADIUS = 600,
+	MIN_FIRE_GAP = 0.06,
 	BOSS_DISTANCE = 90,
 	BOSS_RETREAT_DISTANCE = 120,
 	RETREAT_HEALTH = 0.6,
@@ -54,13 +71,15 @@ local CONFIG = {
 	SKIP_ENEMY_LIMIT = 400,
 	SKIP_RESUME_ENEMIES = 300,
 	FLIGHT_HEIGHT = 2.5,
-
+	-- AimAssist.CONE_RANGE measured live 2026-10-24: the game's own assist ignores monkeys past this.
+	GAME_ASSIST_RANGE = 250,
 	CHEST_REACH = 7,
 	CHEST_TIMEOUT = 30,
-
-	REMOTE_GAPS = { Vote = 1, HealthUpgrade = 1, GameAction = 10 },
+	-- Minimum seconds between two fires of the same remote; a player can't click faster than this.
+	REMOTE_GAPS = { Vote = 1, Upgrade = 1, Ability = 1, GameAction = 10 },
 }
 
+-- Services.
 local playersService = game:GetService("Players")
 local replicatedStorage = game:GetService("ReplicatedStorage")
 local runService = game:GetService("RunService")
@@ -69,20 +88,31 @@ local lightingService = game:GetService("Lighting")
 local virtualUser = game:GetService("VirtualUser")
 local pathfindingService = game:GetService("PathfindingService")
 
+-- State.
 local localPlayer = playersService.LocalPlayer
 local maid = Maid.new()
 local Game = {}
 local Library, Toggles, Options = nil, nil, nil
 local Net = { last = {}, counts = {}, total = 0 }
 local state = {
+	buffs = false,
+	originalFireRate = false,
 	zones = {},
+	skillLast = {},
 	bossEvents = {},
 	hazardSequence = 0,
+	lastFire = 0,
+	lastUpgrade = 0,
 	lastSkipScan = 0,
+	lastTurret = 0,
+	lastUlt = 0,
 	lastStatus = 0,
 	errors = 0,
 }
+local sightParams = RaycastParams.new()
+sightParams.FilterType = Enum.RaycastFilterType.Include
 
+---@return table
 local function newCrowd()
 	return { x = {}, y = {}, z = {}, r = {}, hp = {}, id = {}, d = {} }
 end
@@ -91,18 +121,17 @@ local crowd = newCrowd()
 local skillCrowd = newCrowd()
 local espCrowd = newCrowd()
 
+-- Game ModuleScripts must be required at identity 2, otherwise they inherit the executor env.
+---@param module Instance
+---@return any
 local function safeRequire(module)
-	local previous = 8
-	if getthreadidentity then
-		local ok, value = pcall(getthreadidentity)
-		if ok then previous = value end
-	end
+	local previous = getthreadidentity and getthreadidentity() or 8
 	if setthreadidentity then
-		pcall(setthreadidentity, 2)
+		setthreadidentity(2)
 	end
 	local ok, result = pcall(require, module)
 	if setthreadidentity then
-		pcall(setthreadidentity, previous)
+		setthreadidentity(previous)
 	end
 	if not ok then
 		error(string.format("require %s failed: %s", module:GetFullName(), tostring(result)), 2)
@@ -110,6 +139,9 @@ local function safeRequire(module)
 	return result
 end
 
+-- Controllers live under PlayerScripts; fall back to the loaded-module list if they were moved.
+---@param name string
+---@return Instance?
 local function findModule(name)
 	local scripts = localPlayer:FindFirstChild("PlayerScripts")
 	local module = scripts and scripts:FindFirstChild(name, true)
@@ -127,6 +159,9 @@ local function findModule(name)
 	return nil
 end
 
+---@param root Instance
+---@param path string
+---@return Instance
 local function waitPath(root, path)
 	local current = root
 	for name in path:gmatch("[^%.]+") do
@@ -136,6 +171,8 @@ local function waitPath(root, path)
 	return current
 end
 
+---@param folder Instance
+---@return table
 local function requireFolder(folder)
 	local result = {}
 	for _, module in folder:GetChildren() do
@@ -150,24 +187,39 @@ local function requireFolder(folder)
 	return result
 end
 
+-- Resolve every module and remote once; a missing piece means the game updated and the hub stops.
 local function loadGame()
 	local unitsModule = findModule("UnitViewController")
+	local placementModule = findModule("PlacementController")
 	local dataModule = findModule("DataController")
-	assert(unitsModule and dataModule, "game controllers not found (game updated?)")
+	assert(unitsModule and placementModule and dataModule, "game controllers not found (game updated?)")
 	Game.units = safeRequire(unitsModule)
+	Game.placement = safeRequire(placementModule)
 	Game.data = safeRequire(dataModule)
+	Game.gun = safeRequire(waitPath(replicatedStorage, "GunKit.Controllers.GunRigController"))
+	Game.cinematic = safeRequire(waitPath(replicatedStorage, "GunKit.Shared.CutsceneFlag"))
 	Game.patterns = safeRequire(waitPath(replicatedStorage, "Shared.Content.AoePatterns"))
+	Game.progression = safeRequire(waitPath(replicatedStorage, "Shared.Content.Progression"))
+	Game.abilities = requireFolder(waitPath(replicatedStorage, "Shared.Content.Abilities"))
+	Game.classes = requireFolder(waitPath(replicatedStorage, "Shared.Content.Classes"))
 	Game.bossDefinitions = requireFolder(waitPath(replicatedStorage, "Shared.Bosses.Definitions"))
 	Game.waves = waitPath(replicatedStorage, "Shared.Waves")
 	Game.bossesLive = waitPath(replicatedStorage, "Shared.Bosses.Live")
 	Game.voteRemote = waitPath(Game.waves, "Vote")
 	Game.upgradeRemote = waitPath(replicatedStorage, "Remotes.UpgradeRequest")
 	Game.gameActionRemote = waitPath(replicatedStorage, "Remotes.GameAction")
+	Game.abilityRemote = waitPath(replicatedStorage, "Shared.Abilities.Use")
 	Game.bossFxRemote = waitPath(replicatedStorage, "Shared.Bosses.Fx")
 	Game.aoeRemote = waitPath(replicatedStorage, "Shared.Effects.Aoe")
 	assert(type(Game.units.crowd) == "function", "UnitViewController.crowd missing (game updated?)")
+	assert(type(Game.gun.AddAimOverride) == "function", "GunRigController.AddAimOverride missing (game updated?)")
 end
 
+-- The single exit for every remote: per-remote gap, counted, never faster than a human click.
+---@param key string
+---@param group string
+---@param remote RemoteEvent
+---@return boolean
 function Net.fire(key, group, remote, ...)
 	local now = os.clock()
 	if now - (Net.last[key] or -math.huge) < CONFIG.REMOTE_GAPS[group] then
@@ -180,11 +232,52 @@ function Net.fire(key, group, remote, ...)
 	return true
 end
 
+---@param name string
+---@return boolean
 local function enabled(name)
 	local toggle = Toggles and Toggles[name]
 	return toggle ~= nil and toggle.Value == true
 end
 
+-- Fire-rate multiplier from the Rapid fire toggle (1 when off).
+---@return number
+local function rapidMultiplier()
+	if not enabled("RapidFire") then
+		return 1
+	end
+	return math.max(1, tonumber(Options and Options.RapidFireMult and Options.RapidFireMult.Value) or 1)
+end
+
+-- Wraps GunKit Buffs.fireRate so the game's own firing loop runs faster. The server may still cap cadence.
+local function hookRapidFire()
+	if state.originalFireRate then
+		return
+	end
+	local ok, buffs = pcall(function()
+		return safeRequire(waitPath(replicatedStorage, "GunKit.Shared.Buffs"))
+	end)
+	if not ok or type(buffs) ~= "table" or type(buffs.fireRate) ~= "function" then
+		warn("[MonkeyHub] Buffs.fireRate not found; rapid fire unavailable")
+		return
+	end
+	local original = buffs.fireRate
+	pcall(function()
+		if setreadonly then
+			setreadonly(buffs, false)
+		end
+	end)
+	local installed = pcall(function()
+		buffs.fireRate = function(...)
+			return original(...) * rapidMultiplier()
+		end
+	end)
+	if installed then
+		state.originalFireRate = original
+		state.buffs = buffs
+	end
+end
+
+---@return Model?, Humanoid?, BasePart?
 local function getCharacter()
 	local character = localPlayer.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -192,10 +285,47 @@ local function getCharacter()
 	return character, humanoid, root
 end
 
+---@param i number
+---@param set table
+---@return Vector3
 local function crowdPoint(set, i)
 	return Vector3.new(set.x[i], set.y[i], set.z[i])
 end
 
+---@param point Vector3
+---@param radius number
+---@param count number
+---@return number
+local function clusterCount(point, radius, count)
+	local total = 0
+	for i = 1, count do
+		if skillCrowd.hp[i] > 0 and (crowdPoint(skillCrowd, i) - point).Magnitude <= radius then
+			total += 1
+		end
+	end
+	return total
+end
+
+-- Line of sight against map geometry only; monkeys are client-rendered views, not blockers.
+---@param origin Vector3
+---@param point Vector3
+---@return boolean
+local function hasLineOfSight(origin, point)
+	if not enabled("RequireSight") then
+		return true
+	end
+	local map = workspace:FindFirstChild("Map")
+	if not map then
+		return true
+	end
+	sightParams.FilterDescendantsInstances = { map }
+	local delta = point - origin
+	local hit = workspace:Raycast(origin, delta, sightParams)
+	return not hit or hit.Distance >= delta.Magnitude - 4
+end
+
+-- Hazards: telegraphs arrive through the game's own OnClientEvent feeds; we only listen.
+---@param zone table
 local function addHazard(zone)
 	state.hazardSequence += 1
 	state.zones["persistent_" .. state.hazardSequence] = zone
@@ -249,6 +379,9 @@ local function hookHazards()
 	end))
 end
 
+---@param point Vector3
+---@param serverNow number
+---@return boolean
 local function dangerous(point, serverNow)
 	local margin = state.bossId and 16 or 10
 	if state.bossPoint then
@@ -295,6 +428,10 @@ local function dangerous(point, serverNow)
 	return false
 end
 
+---@param from Vector3
+---@param to Vector3
+---@param serverNow number
+---@return boolean
 local function safePath(from, to, serverNow)
 	local steps = math.max(2, math.ceil((to - from).Magnitude / 8))
 	local leftDanger = not dangerous(from, serverNow)
@@ -310,6 +447,10 @@ local function safePath(from, to, serverNow)
 	return leftDanger
 end
 
+-- Pick the closest safe point to where we wanted to go; ring search around the root.
+---@param root BasePart
+---@param destination Vector3
+---@return Vector3
 local function dodge(root, destination)
 	state.avoiding = false
 	if not enabled("AvoidHazards") then
@@ -339,6 +480,10 @@ local function dodge(root, destination)
 	return best or root.Position
 end
 
+-- Boss tracking, health-based retreat and acid puddles.
+---@param root BasePart
+---@param humanoid Humanoid
+---@param now number
 local function survival(root, humanoid, now)
 	state.healthRatio = humanoid.Health / math.max(humanoid.MaxHealth, 1)
 	if state.lastHealth and humanoid.Health < state.lastHealth - 3 then
@@ -388,20 +533,31 @@ local function survival(root, humanoid, now)
 	end
 end
 
-local function autoHealthUpgrade()
-	if not enabled("AutoHealthUpgrade") then
-		return
-	end
-	if localPlayer:GetAttribute("HealthUpgradeAvailable") ~= true then
+-- Upgrade shop: same remote and argument the shop button sends, only when the shop says it's buyable.
+local function upgrades()
+	local weapon = localPlayer:GetAttribute("WeaponUpgradeAvailable")
+	local health = localPlayer:GetAttribute("HealthUpgradeAvailable")
+	state.upgradesComplete = weapon == false and health == false
+	if not enabled("AutoUpgrade") then
 		return
 	end
 	local cash = localPlayer:GetAttribute("Cash") or 0
-	local cost = localPlayer:GetAttribute("HealthUpgradeCost") or math.huge
-	if cash >= cost then
-		Net.fire("HealthUpgrade", "HealthUpgrade", Game.upgradeRemote, "Health")
+	local kind, cost
+	if weapon == true then
+		kind, cost = "Weapon", localPlayer:GetAttribute("WeaponUpgradeCost") or math.huge
+	elseif health == true then
+		kind, cost = "Health", localPlayer:GetAttribute("HealthUpgradeCost") or math.huge
 	end
+	if not kind or cash < cost then
+		return
+	end
+	Net.fire("Upgrade", "Upgrade", Game.upgradeRemote, kind)
 end
 
+-- Wave auto-skip vote: only while it's safe to pull more monkeys in.
+---@param root BasePart
+---@param humanoid Humanoid
+---@param now number
 local function adaptiveSkip(root, humanoid, now)
 	if now - state.lastSkipScan < 0.4 then
 		return
@@ -409,19 +565,13 @@ local function adaptiveSkip(root, humanoid, now)
 	state.lastSkipScan = now
 	local count = Game.units.crowd(root.Position.X, root.Position.Z, CONFIG.SCAN_RADIUS, CONFIG.SCAN_MAX, skillCrowd)
 	local alive = 0
-	local nearestPoint, nearestDistance = nil, math.huge
 	for i = 1, count do
 		if skillCrowd.hp[i] > 0 then
 			alive += 1
-			local point = crowdPoint(skillCrowd, i)
-			local distance = (point - root.Position).Magnitude
-			if distance < nearestDistance then
-				nearestPoint, nearestDistance = point, distance
-			end
 		end
 	end
-	state.enemyPoint = nearestPoint
 	state.liveEnemies = alive
+	state.skillEnemyCount = count
 	if not enabled("AutoSkip") then
 		if state.skipOwned and localPlayer:GetAttribute("AutoSkip") == true then
 			if Net.fire("Vote", "Vote", Game.voteRemote, "Auto", false) then
@@ -450,6 +600,310 @@ local function adaptiveSkip(root, humanoid, now)
 	end
 end
 
+-- Weapon handling: equip the first real gun (a Tool with a WeaponConfig).
+---@param humanoid Humanoid
+---@param character Model
+---@return Tool?
+local function equipGun(humanoid, character)
+	local equipped = character:FindFirstChildOfClass("Tool")
+	if equipped and equipped:FindFirstChild("WeaponConfig") then
+		state.lastGunTool = equipped
+		return equipped
+	end
+	local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+	local candidate = state.lastGunTool
+	if not candidate or not candidate:FindFirstChild("WeaponConfig") or (candidate.Parent ~= backpack and candidate.Parent ~= character) then
+		candidate = nil
+		for _, tool in backpack and backpack:GetChildren() or {} do
+			if tool:IsA("Tool") and tool:FindFirstChild("WeaponConfig") then
+				candidate = tool
+				break
+			end
+		end
+	end
+	if not candidate then
+		return nil
+	end
+	if equipped then
+		equipped:Deactivate()
+	end
+	humanoid:EquipTool(candidate)
+	state.lastGunTool = candidate
+	return candidate
+end
+
+-- Tool-based skills (e.g. grenades) equip, click once, then the gun comes back.
+---@param name string
+---@param humanoid Humanoid
+---@param character Model
+---@param now number
+---@return boolean
+local function activateSkillTool(name, humanoid, character, now)
+	if now < (state.skillToolUntil or 0) then
+		return false
+	end
+	local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+	local tool = character:FindFirstChild(name) or (backpack and backpack:FindFirstChild(name))
+	if not tool or not tool:IsA("Tool") then
+		return false
+	end
+	state.skillToolUntil = now + 0.8
+	humanoid:EquipTool(tool)
+	task.delay(0.15, function()
+		if localPlayer.Character ~= character or humanoid.Health <= 0 or tool.Parent ~= character then
+			return
+		end
+		tool:Activate()
+		task.delay(0.1, function()
+			if tool.Parent then
+				tool:Deactivate()
+			end
+		end)
+	end)
+	task.delay(0.8, function()
+		if localPlayer.Character == character and humanoid.Health > 0 then
+			equipGun(humanoid, character)
+		end
+	end)
+	return true
+end
+
+---@param root BasePart
+---@param stats table
+---@return Vector3?
+local function skillTarget(root, stats)
+	local range = stats.Range or 200
+	local best, bestCount
+	for i = 1, state.skillEnemyCount or 0 do
+		if skillCrowd.hp[i] <= 0 then
+			continue
+		end
+		local point = crowdPoint(skillCrowd, i)
+		if (point - root.Position).Magnitude >= range * 0.9 then
+			continue
+		end
+		local count = clusterCount(point, stats.BlastRadius or 12, state.skillEnemyCount)
+		if not bestCount or count > bestCount then
+			best, bestCount = point, count
+		end
+	end
+	return best
+end
+
+---@param threshold number
+---@return boolean
+local function teamNeedsHeal(threshold)
+	for _, player in playersService:GetPlayers() do
+		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.Health > 0 and humanoid.Health / humanoid.MaxHealth < threshold then
+			return true
+		end
+	end
+	return false
+end
+
+---@param kind string
+---@return number
+local function placementCount(kind)
+	local count = 0
+	local folder = workspace:FindFirstChild("Placements")
+	for _, object in folder and folder:GetChildren() or {} do
+		if object:IsA("Model") and object.Name == kind then
+			count += 1
+		end
+	end
+	return count
+end
+
+-- Cast one skill the way its own keybind would: tool skills click the tool, placed skills go
+-- through PlacementController, self/ultimate skills fire the ability remote with the game's aim.
+---@param id string
+---@param stats table
+---@param humanoid Humanoid
+---@param now number
+---@param aim Vector3?
+---@return boolean
+local function castSkill(id, stats, humanoid, now, aim)
+	if now - (state.skillLast[id] or -100) < math.max(1, stats.Swing or 0) then
+		return false
+	end
+	if stats.Tool then
+		if not activateSkillTool(stats.Tool, humanoid, localPlayer.Character, now) then
+			return false
+		end
+	elseif not stats.Self and not stats.Ultimate then
+		Game.placement:Activate(id)
+	else
+		local previousAim = state.targetPoint
+		state.skillAimPoint = aim
+		if aim then
+			state.targetPoint = aim
+		end
+		Game.gun:PushAim()
+		local fired = Net.fire("Ability:" .. id, "Ability", Game.abilityRemote, id)
+		state.skillAimPoint = nil
+		state.targetPoint = previousAim
+		if not fired then
+			return false
+		end
+	end
+	state.skillLast[id] = now
+	if id == localPlayer:GetAttribute("Ability1Id") then
+		state.gunResumeAt = now + 0.8
+	end
+	return true
+end
+
+---@param id string
+---@param stats table
+---@param root BasePart
+---@param hp number
+---@return boolean, Vector3?
+local function skillWanted(id, stats, root, hp)
+	local target = skillTarget(root, stats)
+	local count = state.skillEnemyCount or 0
+	if id == "Grenade" or id == "Decoy" or id == "Quickdraw" then
+		return target ~= nil, target
+	elseif id == "ShortFuse" then
+		return clusterCount(root.Position, (stats.BlastRadius or 36) * 0.8, count) > 0 or hp < 0.6, target
+	elseif id == "GroundSlam" then
+		return clusterCount(root.Position, (stats.Radius or 16) * 0.9, count) > 0, target
+	elseif id == "Brace" or id == "Adrenaline" then
+		return hp < 0.8 or state.bossId ~= nil, target
+	elseif id == "Medkit" then
+		return hp < 0.85, root.Position
+	elseif id == "HealingPod" then
+		return teamNeedsHeal(0.85) and placementCount("HealingPod") == 0, target
+	elseif id == "Barricade" or id == "Mine" then
+		return clusterCount(root.Position, 25, count) >= 3 and not state.bossId and not state.avoiding, target
+	elseif id == "Ricochet" then
+		local velocity = root.AssemblyLinearVelocity
+		local direction = velocity.Magnitude > 1 and velocity.Unit or root.CFrame.LookVector
+		return target ~= nil and not state.bossId and safePath(root.Position, root.Position + direction * 22, workspace:GetServerTimeNow()), target
+	elseif id == "Repair" then
+		local folder = workspace:FindFirstChild("Placements")
+		for _, object in folder and folder:GetChildren() or {} do
+			local max = object:GetAttribute("MaxHealth")
+			if object:IsA("Model") and max and (object:GetAttribute("Health") or max) < max
+				and (object:GetPivot().Position - root.Position).Magnitude < (stats.Range or 14) then
+				return true, target
+			end
+		end
+	end
+	return false, nil
+end
+
+-- Primary/secondary class skills, gated on the same ReadyAt/Cost/Cash attributes the HUD shows.
+---@param root BasePart
+---@param humanoid Humanoid
+---@param now number
+local function useClassSkills(root, humanoid, now)
+	if not enabled("AutoSkills") then
+		return
+	end
+	local hp = humanoid.Health / humanoid.MaxHealth
+	local serverNow = workspace:GetServerTimeNow()
+	local cash = localPlayer:GetAttribute("Cash") or 0
+	for i = 1, 2 do
+		local slot = "Ability" .. i
+		local id = localPlayer:GetAttribute(slot .. "Id")
+		local definition = id and Game.abilities[id]
+		if not definition or id == "Turret" or id == "Satchel" then
+			continue
+		end
+		local stats = Game.progression.Gameplay(definition, localPlayer:GetAttribute(slot .. "Level") or 1)
+		local cost = localPlayer:GetAttribute(slot .. "Cost") or stats.Cost or 0
+		if serverNow < (localPlayer:GetAttribute(slot .. "ReadyAt") or 0) or cash < cost then
+			continue
+		end
+		if cost > 0 and not state.upgradesComplete then
+			continue
+		end
+		local wanted, aim = skillWanted(id, stats, root, hp)
+		if wanted then
+			castSkill(id, stats, humanoid, now, aim)
+		end
+	end
+end
+
+---@param root BasePart
+---@param humanoid Humanoid
+---@param now number
+local function useUltimate(root, humanoid, now)
+	if not enabled("AutoUltimate") then
+		return
+	end
+	local charge = localPlayer:GetAttribute("UltimateCharge") or 0
+	if charge < 1 or workspace:GetServerTimeNow() < (localPlayer:GetAttribute("UltimateReadyAt") or 0) or now - state.lastUlt < 2 then
+		return
+	end
+	local id = localPlayer:GetAttribute("UltimateId")
+	local definition = id and Game.abilities[id]
+	if not definition then
+		return
+	end
+	local stats = Game.progression.Gameplay(definition, localPlayer:GetAttribute("UltimateLevel") or 1)
+	local aim = skillTarget(root, stats)
+	local hp = humanoid.Health / humanoid.MaxHealth
+	local count = state.skillEnemyCount or 0
+	local wanted = true
+	if id == "CodeBlue" then
+		wanted = teamNeedsHeal(0.9)
+	elseif id == "Overclock" then
+		wanted = placementCount("Turret") > 0
+	elseif id == "LastStand" then
+		wanted = hp < 0.7
+	elseif id == "Airstrike" then
+		wanted = aim ~= nil
+	elseif id == "FanTheHammer" then
+		wanted = clusterCount(root.Position, stats.Fan and stats.Fan.TargetRadius or 30, count) > 0
+	elseif id == "Warpath" then
+		wanted = clusterCount(root.Position, stats.TauntRadius or 30, count) > 0 or hp < 0.7
+	elseif id == "BlastDash" then
+		local direction = root.CFrame.LookVector
+		aim = root.Position + Vector3.new(direction.X, 0, direction.Z).Unit * 120
+		wanted = count > 0 and safePath(root.Position, aim, workspace:GetServerTimeNow())
+	end
+	if not wanted then
+		return
+	end
+	if castSkill(id, stats, humanoid, now, aim) then
+		state.lastUlt = now
+	end
+end
+
+-- Turret: drop one where we stand when monkeys are in its range and the slot is ready.
+---@param root BasePart
+---@param now number
+local function autoTurret(root, now)
+	if not enabled("AutoTurret") or state.bossId or now - state.lastTurret < 2 then
+		return
+	end
+	local slot
+	for i = 1, 2 do
+		if localPlayer:GetAttribute("Ability" .. i .. "Id") == "Turret" then
+			slot = "Ability" .. i
+		end
+	end
+	local definition = Game.abilities.Turret
+	if not slot or not definition then
+		return
+	end
+	local cost = localPlayer:GetAttribute(slot .. "Cost") or (definition.Gameplay and definition.Gameplay.Cost) or 0
+	if (localPlayer:GetAttribute("Cash") or 0) < cost or workspace:GetServerTimeNow() < (localPlayer:GetAttribute(slot .. "ReadyAt") or 0) then
+		return
+	end
+	local stats = Game.progression.Gameplay(definition, localPlayer:GetAttribute(slot .. "Level") or 1)
+	if clusterCount(root.Position, (stats.Range or 50) * 0.8, state.skillEnemyCount or 0) == 0 then
+		return
+	end
+	state.lastTurret = now
+	Game.placement:Activate("Turret")
+end
+
+-- Ground movement: walk away from the swarm and out of telegraphs with Humanoid:MoveTo.
+---@param humanoid Humanoid
+---@param root BasePart
 local function kite(humanoid, root)
 	if enabled("FlightOrbit") then
 		return
@@ -482,8 +936,11 @@ local function kite(humanoid, root)
 	end
 end
 
+-- Chests: walk there with pathfinding and press the prompt like a player would (10-stud server range).
 local Chest = { tried = {}, lastStart = 0 }
 
+---@param chest Model
+---@return boolean
 function Chest.isOpened(chest)
 	for _, id in string.split(localPlayer:GetAttribute("OpenedChests") or "", ",") do
 		if id == chest.Name then
@@ -493,6 +950,8 @@ function Chest.isOpened(chest)
 	return false
 end
 
+---@param root BasePart
+---@return Model?, ProximityPrompt?
 function Chest.pick(root)
 	local folder = workspace:FindFirstChild("Chests")
 	local budget = (localPlayer:GetAttribute("Cash") or 0) - Options.ChestReserve.Value
@@ -514,28 +973,23 @@ function Chest.pick(root)
 	return best, bestPrompt
 end
 
+---@param chest Model
+---@param root BasePart
 function Chest.plan(chest, root)
-	local ok, waypoints = pcall(function()
-		if not chest or not chest.Parent or not root or not root.Parent then
-			return nil
-		end
-		local path = pathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
-		path:ComputeAsync(root.Position, chest:GetPivot().Position)
-		if path.Status == Enum.PathStatus.Success then
-			return path:GetWaypoints()
-		end
-		return nil
-	end)
-	return ok and waypoints or nil
+	local path = pathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
+	local ok = pcall(path.ComputeAsync, path, root.Position, chest:GetPivot().Position)
+	Chest.waypoints = ok and path.Status == Enum.PathStatus.Success and path:GetWaypoints() or nil
+	Chest.waypointIndex = 2
 end
 
+-- Returns true while a chest run owns movement, so kiting stays out of the way.
+---@param humanoid Humanoid
+---@param root BasePart
+---@param now number
+---@return boolean
 function Chest.step(humanoid, root, now)
 	if not enabled("AutoChest") or state.bossId or (state.healthRatio or 1) < 0.6 or enabled("FlightOrbit") then
-		if Chest.target then
-			humanoid:Move(Vector3.zero)
-		end
 		Chest.target = nil
-		Chest.planning = false
 		return false
 	end
 	if not Chest.target then
@@ -548,18 +1002,13 @@ function Chest.step(humanoid, root, now)
 		end
 		Chest.target, Chest.prompt, Chest.startedAt, Chest.lastStart = chest, prompt, now, now
 		Chest.planning = true
-		Chest.waypoints = nil
 		task.spawn(function()
-			local waypoints = Chest.plan(chest, root)
-			if Chest.target == chest then
-				Chest.waypoints = waypoints
-				Chest.waypointIndex = 2
-				Chest.planning = false
-			end
+			Chest.plan(chest, root)
+			Chest.planning = false
 		end)
 	end
 	local chest, prompt = Chest.target, Chest.prompt
-	if not chest or not prompt or not chest.Parent or not prompt.Enabled or Chest.isOpened(chest) or now - Chest.startedAt > CONFIG.CHEST_TIMEOUT then
+	if not chest.Parent or not prompt.Enabled or Chest.isOpened(chest) or now - Chest.startedAt > CONFIG.CHEST_TIMEOUT then
 		Chest.tried[chest] = os.clock() + 20
 		Chest.target = nil
 		return false
@@ -591,8 +1040,10 @@ function Chest.step(humanoid, root, now)
 	return true
 end
 
+-- Flight orbit (risky): LinearVelocity circle around the map center, optional local noclip.
 local Flight = { obstacleState = {}, obstacleConnections = {} }
 
+---@param object Instance
 function Flight.disableObstacle(object)
 	local original = Flight.obstacleState[object]
 	if not original then
@@ -609,7 +1060,7 @@ end
 
 function Flight.restoreObstacles()
 	for _, connection in Flight.obstacleConnections do
-		pcall(connection.Disconnect, connection)
+		connection:Disconnect()
 	end
 	table.clear(Flight.obstacleConnections)
 	for object, original in Flight.obstacleState do
@@ -626,19 +1077,20 @@ end
 function Flight.stop()
 	Flight.restoreObstacles()
 	if Flight.velocity then
-		pcall(Flight.velocity.Destroy, Flight.velocity)
+		Flight.velocity:Destroy()
 	end
 	if Flight.attachment then
-		pcall(Flight.attachment.Destroy, Flight.attachment)
+		Flight.attachment:Destroy()
 	end
 	if Flight.root and Flight.root.Parent then
-		pcall(function()
-			Flight.root.AssemblyLinearVelocity = Vector3.zero
-		end)
+		Flight.root.AssemblyLinearVelocity = Vector3.zero
 	end
 	Flight.root, Flight.attachment, Flight.velocity, Flight.center = nil, nil, nil, nil
 end
 
+---@param humanoid Humanoid
+---@param root BasePart
+---@param destination Vector3
 function Flight.flyTo(humanoid, root, destination)
 	if Flight.root ~= root or not Flight.velocity or not Flight.velocity.Parent then
 		Flight.stop()
@@ -674,6 +1126,9 @@ function Flight.flyTo(humanoid, root, destination)
 	Flight.velocity.VectorVelocity = delta.Magnitude > 0.6 and delta.Unit * math.min(speed, delta.Magnitude * 3) or Vector3.zero
 end
 
+---@param humanoid Humanoid
+---@param root BasePart
+---@param now number
 function Flight.orbit(humanoid, root, now)
 	local map = workspace:FindFirstChild("Map")
 	if not map then
@@ -705,6 +1160,106 @@ function Flight.orbit(humanoid, root, now)
 	Flight.flyTo(humanoid, root, dodge(root, destination))
 end
 
+-- Targeting: nearest / boss / lowest HP inside the weapon's own max range, with lead.
+---@param root BasePart
+---@param range number
+---@param count number
+---@return number?, number
+local function pickTarget(root, range, count)
+	local mode = Options.TargetMode.Value
+	local best, bestScore, bestDistance = nil, math.huge, math.huge
+	local origin = root.Position + Vector3.new(0, 1.5, 0)
+	for i = 1, count do
+		if crowd.hp[i] <= 0 then
+			continue
+		end
+		local point = crowdPoint(crowd, i)
+		local distance = (point - root.Position).Magnitude
+		if distance > range then
+			continue
+		end
+		local score = distance
+		if mode == "Lowest HP" then
+			score = crowd.hp[i]
+		end
+		if mode ~= "Nearest" and crowd.id[i] == state.bossId then
+			score = -math.huge
+		end
+		if score < bestScore and hasLineOfSight(origin, point) then
+			best, bestScore, bestDistance = i, score, distance
+		end
+	end
+	return best, bestDistance
+end
+
+---@param humanoid Humanoid
+---@param character Model
+---@param root BasePart
+---@param now number
+local function combat(humanoid, character, root, now)
+	local wantsAim = enabled("AutoFight") or enabled("AimAssist")
+	if not wantsAim or now < (state.skillToolUntil or 0) or now < (state.gunResumeAt or 0) then
+		state.targetPoint = nil
+		return
+	end
+	local tool = enabled("AutoFight") and equipGun(humanoid, character) or character:FindFirstChildOfClass("Tool")
+	local configModule = tool and tool:FindFirstChild("WeaponConfig")
+	if not configModule then
+		state.targetPoint = nil
+		return
+	end
+	if tool ~= state.tool then
+		if state.tool then
+			state.tool:Deactivate()
+		end
+		state.tool = tool
+		state.config = safeRequire(configModule)
+		state.lastFire = 0
+	end
+	local projectile = state.config and state.config.projectile
+	if not projectile then
+		return
+	end
+	local gameAim = Options.AimMode.Value == "Game assist"
+	local range = projectile.maxRange or 200
+	if gameAim then
+		range = math.min(range, CONFIG.GAME_ASSIST_RANGE)
+	end
+	local count = Game.units.crowd(root.Position.X, root.Position.Z, range + 10, CONFIG.SCAN_MAX, crowd)
+	local best, distance = pickTarget(root, range, count)
+	if not best then
+		state.targetPoint, state.enemyPoint = nil, nil
+		tool:Deactivate()
+		return
+	end
+	local point = crowdPoint(crowd, best)
+	local velocity = Vector3.zero
+	if state.targetId == crowd.id[best] and state.targetAt and now > state.targetAt then
+		local measured = (point - state.lastTargetPoint) / (now - state.targetAt)
+		if measured.Magnitude <= 80 then
+			velocity = (state.targetVelocity or Vector3.zero):Lerp(measured, 0.45)
+		end
+	end
+	state.targetId, state.lastTargetPoint, state.targetAt, state.targetVelocity = crowd.id[best], point, now, velocity
+	state.enemyPoint, state.enemyHealth, state.distance = point, crowd.hp[best], distance
+	-- Game assist: leave the aim point to the game's AimAssist (it keeps its own wall check and lead).
+	state.targetPoint = not gameAim and point + velocity * math.min(distance / (projectile.speed or 200), 0.5) or nil
+	if not enabled("AutoFight") then
+		return
+	end
+	Game.gun:PushAim()
+	local multiplier = rapidMultiplier()
+	local interval = 60 / (projectile.roundsPerMinute or 60) / multiplier
+	if now - state.lastFire >= math.max(CONFIG.MIN_FIRE_GAP / multiplier, interval) then
+		tool:Activate()
+		state.lastFire = now
+		state.shots = (state.shots or 0) + 1
+	end
+end
+
+-- End of run: press Replay the way the end screen does, re-arming the hub for the next server.
+---@param humanoid Humanoid?
+---@return boolean
 local function replay(humanoid)
 	local dead = localPlayer:GetAttribute("Dead") == true or (humanoid and humanoid.Health <= 0)
 	local ended = Game.waves:GetAttribute("Phase") == "Complete"
@@ -719,28 +1274,25 @@ local function replay(humanoid)
 	if not ended and not (endGui and endGui.Enabled and gameOver and gameOver.Visible) then
 		return true
 	end
-	if enabled("ReExecute") and not state.teleportQueued and CONFIG.REEXEC_SOURCE ~= "" then
-		local queue = queue_on_teleport
-		if type(queue) ~= "function" and type(getgenv) == "function" then
-			local ok, env = pcall(getgenv)
-			if ok and type(env) == "table" then
-				queue = env.queueonteleport or env.queue_on_teleport
-			end
-		end
-		if type(queue) == "function" then
-			local ok = pcall(queue, CONFIG.REEXEC_SOURCE)
-			state.teleportQueued = ok
+	if enabled("ReExecute") and not state.teleportQueued then
+		local queue = queue_on_teleport or getgenv().queueonteleport
+		if queue then
+			queue(CONFIG.REEXEC_SOURCE)
+			state.teleportQueued = true
 		end
 	end
 	Net.fire("Replay", "GameAction", Game.gameActionRemote, "Replay")
 	return true
 end
 
+---@param value any
+---@return string
 local function formatNumber(value)
 	local digits = string.format("%.0f", math.max(0, tonumber(value) or 0))
 	return (digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
+---@param now number
 local function updateStatus(now)
 	if now - state.lastStatus < 0.5 or not state.statusLabel then
 		return
@@ -748,40 +1300,50 @@ local function updateStatus(now)
 	state.lastStatus = now
 	local ok, data = pcall(Game.data.GetData, Game.data)
 	local gems = ok and data and data.Gems or 0
-	state.statusLabel:Set(string.format(
-		"Gems %s  |  Run +%s\nWave %s  |  Kills %s\nEnemies %s\nBoss %s\nRequests %d (wave %d, health %d, replay %d)",
+	state.statusLabel:SetText(string.format(
+		"Gems %s | run +%s\nWave %s | kills %s | monkeys %s\nTarget %s | shots %d\nBoss %s\nRemotes sent %d (vote %d, upg %d, abil %d, act %d)",
 		formatNumber(gems),
 		formatNumber(localPlayer:GetAttribute("RunGems")),
 		tostring(Game.waves:GetAttribute("Number") or "-"),
 		formatNumber(localPlayer:GetAttribute("Kills")),
 		tostring(state.liveEnemies or 0),
-		state.bossName and string.format("%s (%s HP)", tostring(state.bossName), tostring(state.bossHealth)) or "None",
+		state.enemyHealth and string.format("%.0f hp @ %.0f", state.enemyHealth, state.distance or 0) or "none",
+		state.shots or 0,
+		state.bossName and string.format("%s (%s hp)", state.bossName, tostring(state.bossHealth)) or "none",
 		Net.total,
 		Net.counts.Vote or 0,
-		Net.counts.HealthUpgrade or 0,
+		Net.counts.Upgrade or 0,
+		Net.counts.Ability or 0,
 		Net.counts.GameAction or 0
 	))
 end
 
+-- Main tick: one pcall per tick, ten errors in a row unloads the hub.
 local function update()
 	local now = os.clock()
 	local character, humanoid, root = getCharacter()
 	updateStatus(now)
 	if replay(humanoid) then
+		state.targetPoint = nil
 		Flight.stop()
 		return
 	end
 	if not humanoid or not root or humanoid.Health <= 0 then
+		state.targetPoint = nil
 		Flight.stop()
 		return
 	end
-	if root.Anchored then
+	if Game.cinematic.Filming() or root.Anchored then
+		state.targetPoint = nil
 		Flight.stop()
 		return
 	end
 	survival(root, humanoid, now)
 	adaptiveSkip(root, humanoid, now)
-	autoHealthUpgrade()
+	upgrades()
+	useClassSkills(root, humanoid, now)
+	useUltimate(root, humanoid, now)
+	autoTurret(root, now)
 	if enabled("FlightOrbit") then
 		Flight.orbit(humanoid, root, now)
 	else
@@ -792,147 +1354,82 @@ local function update()
 			kite(humanoid, root)
 		end
 	end
+	combat(humanoid, character, root, now)
 end
 
-local Esp = { boxes = {}, labels = {}, count = 0, lastScan = 0 }
+-- ESP: Drawing pool fed straight from UnitViewController.crowd, so it costs no instances.
+local Esp = { dots = {} }
 
 function Esp.init()
 	if not Drawing then
 		return
 	end
-	local ok = pcall(function()
-		for i = 1, CONFIG.ESP_MAX do
-			local box = Drawing.new("Square")
-			box.Filled = false
-			box.Thickness = 1.4
-			box.Transparency = 1
-			box.Visible = false
-			Esp.boxes[i] = maid:give(box)
-
-			local label = Drawing.new("Text")
-			label.Center = true
-			label.Outline = true
-			label.Size = 13
-			label.Font = 2
-			label.Visible = false
-			Esp.labels[i] = maid:give(label)
-		end
-
-		Esp.bossBox = maid:give(Drawing.new("Square"))
-		Esp.bossBox.Filled = false
-		Esp.bossBox.Thickness = 2
-		Esp.bossBox.Transparency = 1
-		Esp.bossBox.Color = Color3.fromRGB(255, 70, 85)
-		Esp.bossBox.Visible = false
-
-		Esp.bossLabel = maid:give(Drawing.new("Text"))
-		Esp.bossLabel.Center = true
-		Esp.bossLabel.Outline = true
-		Esp.bossLabel.Size = 15
-		Esp.bossLabel.Font = 2
-		Esp.bossLabel.Color = Color3.fromRGB(255, 90, 100)
-		Esp.bossLabel.Visible = false
-	end)
-	if not ok then
-		Esp.hide(1)
-		Esp.bossBox = nil
-		Esp.bossLabel = nil
+	for i = 1, CONFIG.ESP_MAX do
+		local dot = Drawing.new("Circle")
+		dot.Filled = true
+		dot.NumSides = 12
+		dot.Thickness = 1
+		dot.Transparency = 1
+		dot.Visible = false
+		Esp.dots[i] = maid:give(dot)
 	end
+	Esp.boss = maid:give(Drawing.new("Text"))
+	Esp.boss.Center = true
+	Esp.boss.Outline = true
+	Esp.boss.Size = 18
+	Esp.boss.Color = Color3.fromRGB(255, 80, 80)
+	Esp.boss.Visible = false
 end
 
 function Esp.hide(from)
-	for i = from, #Esp.boxes do
-		local box = Esp.boxes[i]
-		local label = Esp.labels[i]
-		if box then box.Visible = false end
-		if label then label.Visible = false end
+	for i = from, #Esp.dots do
+		Esp.dots[i].Visible = false
 	end
-	if Esp.bossBox then Esp.bossBox.Visible = false end
-	if Esp.bossLabel then Esp.bossLabel.Visible = false end
 end
 
 function Esp.render()
-	if not Drawing or not Esp.bossBox or not Esp.bossLabel then
+	if not Drawing or not Esp.boss then
 		return
 	end
 	local camera = workspace.CurrentCamera
-	if not camera then
+	if not enabled("MonkeyEsp") or not camera then
 		Esp.hide(1)
-		return
-	end
-
-	local now = os.clock()
-	if enabled("MonkeyEsp") then
-		if now - Esp.lastScan >= 0.15 then
-			Esp.lastScan = now
-			local focus = camera.CFrame.Position
-			Esp.count = Game.units.crowd(focus.X, focus.Z, CONFIG.ESP_RADIUS, CONFIG.ESP_MAX, espCrowd)
-		end
-
+	else
+		local focus = camera.CFrame.Position
+		local count = Game.units.crowd(focus.X, focus.Z, CONFIG.ESP_RADIUS, CONFIG.ESP_MAX, espCrowd)
 		local color = Options.EspColor and Options.EspColor.Value or Color3.fromRGB(255, 200, 60)
 		local used = 0
-		for i = 1, Esp.count do
+		for i = 1, count do
 			if espCrowd.hp[i] <= 0 then
 				continue
 			end
-			local screen, onScreen = camera:WorldToViewportPoint(crowdPoint(espCrowd, i) + Vector3.new(0, 3, 0))
-			if not onScreen or screen.Z <= 0 then
+			local screen, onScreen = camera:WorldToViewportPoint(crowdPoint(espCrowd, i))
+			if not onScreen then
 				continue
 			end
 			used += 1
-			local box = Esp.boxes[used]
-			local label = Esp.labels[used]
-			if not box or not label then
-				break
-			end
-			local height = math.clamp(2600 / math.max(screen.Z, 1), 18, 96)
-			local width = height * 0.58
-			local position = Vector2.new(screen.X - width * 0.5, screen.Y - height * 0.5)
-			local isBoss = espCrowd.id[i] == state.bossId
-			local markerColor = isBoss and Color3.fromRGB(255, 70, 85) or color
-			box.Position = position
-			box.Size = Vector2.new(width, height)
-			box.Color = markerColor
-			box.Visible = true
-			label.Text = string.format("%s HP", formatNumber(espCrowd.hp[i]))
-			label.Position = Vector2.new(screen.X, position.Y - 16)
-			label.Color = markerColor
-			label.Visible = true
+			local dot = Esp.dots[used]
+			dot.Position = Vector2.new(screen.X, screen.Y)
+			dot.Radius = math.clamp(300 / math.max(screen.Z, 1), 2, 9)
+			dot.Color = espCrowd.id[i] == state.bossId and Color3.fromRGB(255, 60, 60) or color
+			dot.Visible = true
 		end
-		for i = used + 1, #Esp.boxes do
-			Esp.boxes[i].Visible = false
-			Esp.labels[i].Visible = false
-		end
-	else
-		for i = 1, #Esp.boxes do
-			Esp.boxes[i].Visible = false
-			Esp.labels[i].Visible = false
-		end
+		Esp.hide(used + 1)
 	end
-
-	if not enabled("BossEsp") or not state.bossPoint then
-		Esp.bossBox.Visible = false
-		Esp.bossLabel.Visible = false
+	if not enabled("BossEsp") or not camera or not state.bossPoint then
+		Esp.boss.Visible = false
 		return
 	end
-	local bossPosition = state.bossPoint + Vector3.new(0, 9, 0)
-	local screen, onScreen = camera:WorldToViewportPoint(bossPosition)
-	if not onScreen or screen.Z <= 0 then
-		Esp.bossBox.Visible = false
-		Esp.bossLabel.Visible = false
-		return
-	end
-	local width, height = 72, 88
-	Esp.bossBox.Position = Vector2.new(screen.X - width * 0.5, screen.Y - height * 0.5)
-	Esp.bossBox.Size = Vector2.new(width, height)
-	Esp.bossBox.Visible = true
-	Esp.bossLabel.Text = string.format("%s  %s HP", tostring(state.bossName or "BOSS"), formatNumber(state.bossHealth))
-	Esp.bossLabel.Position = Vector2.new(screen.X, screen.Y - height * 0.5 - 18)
-	Esp.bossLabel.Visible = true
+	local screen, onScreen = camera:WorldToViewportPoint(state.bossPoint + Vector3.new(0, 8, 0))
+	Esp.boss.Visible = onScreen
+	Esp.boss.Position = Vector2.new(screen.X, screen.Y)
+	Esp.boss.Text = string.format("%s  %s hp", tostring(state.bossName), tostring(state.bossHealth))
 end
 
+-- Local-only quality of life: fullbright, anti-AFK, walk speed, infinite jump.
 local Misc = { lighting = nil }
 
+---@param on boolean
 function Misc.setFullbright(on)
 	if on and not Misc.lighting then
 		Misc.lighting = {
@@ -958,10 +1455,8 @@ function Misc.init()
 		if not enabled("AntiAfk") then
 			return
 		end
-		pcall(function()
-			virtualUser:CaptureController()
-			virtualUser:ClickButton2(Vector2.new(0, 0))
-		end)
+		virtualUser:CaptureController()
+		virtualUser:ClickButton2(Vector2.new(0, 0))
 	end))
 	maid:give(userInputService.JumpRequest:Connect(function()
 		if not enabled("InfiniteJump") then
@@ -973,29 +1468,21 @@ function Misc.init()
 		end
 	end))
 	maid:give(runService.Heartbeat:Connect(function()
-		if not enabled("WalkSpeed") and not Misc.baseSpeed then
-			return
-		end
 		local _, humanoid = getCharacter()
 		if not humanoid then
 			return
 		end
-		pcall(function()
-			if enabled("WalkSpeed") then
-				if Misc.speedHumanoid ~= humanoid then
-					Misc.speedHumanoid = humanoid
-					Misc.baseSpeed = humanoid.WalkSpeed
-				end
-				humanoid.WalkSpeed = Options.WalkSpeedValue.Value
-			elseif Misc.baseSpeed and Misc.speedHumanoid == humanoid then
-				humanoid.WalkSpeed = Misc.baseSpeed
-				Misc.baseSpeed = nil
-				Misc.speedHumanoid = nil
-			end
-		end)
+		if enabled("WalkSpeed") then
+			Misc.baseSpeed = Misc.baseSpeed or humanoid.WalkSpeed
+			humanoid.WalkSpeed = Options.WalkSpeedValue.Value
+		elseif Misc.baseSpeed then
+			humanoid.WalkSpeed = Misc.baseSpeed
+			Misc.baseSpeed = nil
+		end
 	end))
 end
 
+-- Monkey colors offered by the ESP dropdown (replaces the Obsidian color picker).
 local ESP_COLORS = {
 	Gold = Color3.fromRGB(255, 200, 60),
 	Red = Color3.fromRGB(255, 70, 90),
@@ -1004,22 +1491,47 @@ local ESP_COLORS = {
 	Green = Color3.fromRGB(80, 230, 130),
 }
 
-local function buildUi()
-	Toggles, Options = {}, {}
+---@return table
+local function readSettings()
+	if not (isfile and readfile and isfile(CONFIG.SETTINGS_FILE)) then
+		return {}
+	end
+	local ok, data = pcall(function()
+		return game:GetService("HttpService"):JSONDecode(readfile(CONFIG.SETTINGS_FILE))
+	end)
+	return ok and type(data) == "table" and data or {}
+end
 
-	local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+-- Load the official Sirius Rayfield Gen2 stable build.
+local function loadRayfield()
+	local ok, library = pcall(function()
+		local source = game:HttpGet(CONFIG.RAYFIELD_URL)
+		assert(type(source) == "string" and #source > 0, "Rayfield Gen2 returned an empty response")
+		local chunk, compileError = loadstring(source)
+		assert(chunk, "Rayfield Gen2 compile failed: " .. tostring(compileError))
+		return chunk()
+	end)
+	assert(ok and type(library) == "table" and type(library.CreateWindow) == "function",
+		"Rayfield Gen2 failed to load: " .. tostring(library))
+	return library
+end
+
+local function buildUi()
+	local Rayfield = loadRayfield()
+	local saved = readSettings()
+
+	Toggles, Options = {}, {}
 	local window = Rayfield:CreateWindow({
 		name = "Monkey Hub",
 		subtitle = "Survive a Million Monkeys",
+		theme = "cobalt",
 		sidebarLayout = true,
-		toggleUIKeybind = "RightControl",
-		configuration = {
-			autoSave = true,
-			autoLoad = true,
-			fileName = "MonkeyHub",
-		},
+		showName = "Monkey Hub",
 	})
 
+	local windowUnloaded = false
+
+	-- Keep the interface consumed by the rest of the hub stable.
 	Library = {
 		Notify = function(_, message, duration)
 			window:Notify({
@@ -1029,119 +1541,256 @@ local function buildUi()
 			})
 		end,
 		Unload = function()
-			pcall(Rayfield.Destroy, Rayfield)
+			if not windowUnloaded then
+				windowUnloaded = true
+				window:Unload()
+			end
 		end,
 	}
 
-	local function addToggle(tab, flag, name, default, callback)
-		local entry = { Value = default == true }
-		Toggles[flag] = entry
-		tab:CreateToggle({
-			name = name,
+	-- Preserve the existing settings file so prior MonkeyHub preferences remain compatible.
+	local persistQueued = false
+	local function persist()
+		if persistQueued then
+			return
+		end
+		persistQueued = true
+		task.delay(1, function()
+			persistQueued = false
+			local data = {}
+			for idx, toggle in Toggles do
+				data[idx] = toggle.Value
+			end
+			for idx, option in Options do
+				data[idx] = option.Raw
+			end
+			if makefolder then
+				pcall(makefolder, "MonkeyHub")
+				pcall(makefolder, "MonkeyHub/settings")
+			end
+			pcall(function()
+				writefile(CONFIG.SETTINGS_FILE, game:GetService("HttpService"):JSONEncode(data))
+			end)
+		end)
+	end
+
+	local function addToggle(tab, idx, cfg)
+		local entry = { Value = cfg.Default == true, Text = cfg.Text }
+		Toggles[idx] = entry
+		local control = tab:CreateToggle({
+			name = cfg.Risky and (cfg.Text .. " (risky)") or cfg.Text,
 			value = entry.Value,
-			flag = flag,
-			callback = function(value)
-				entry.Value = value == true
-				if callback then
-					local ok, err = pcall(callback, entry.Value)
-					if not ok then
-						warn("[MonkeyHub] " .. flag .. ": " .. tostring(err))
-					end
+			flag = "MonkeyHub_" .. idx,
+			forgetState = true,
+			callback = function(on)
+				entry.Value = on == true
+				persist()
+				if cfg.Callback then
+					cfg.Callback(entry.Value)
 				end
 			end,
 		})
+		if type(saved[idx]) == "boolean" and saved[idx] ~= entry.Value then
+			control:Set(saved[idx])
+		end
 	end
 
-	local function addSlider(tab, flag, name, default, minimum, maximum, increment)
-		local entry = { Value = default, Raw = default }
-		Options[flag] = entry
-		tab:CreateSlider({
-			name = name,
-			range = { minimum, maximum },
-			increment = increment or 1,
-			value = default,
-			flag = flag,
+	local function addSlider(tab, idx, cfg)
+		local entry = { Value = cfg.Default, Raw = cfg.Default }
+		Options[idx] = entry
+		local control = tab:CreateSlider({
+			name = cfg.Text,
+			range = { cfg.Min, cfg.Max },
+			increment = cfg.Increment or 1,
+			value = cfg.Default,
+			flag = "MonkeyHub_" .. idx,
+			forgetState = true,
 			callback = function(value)
-				entry.Value, entry.Raw = value, value
-			end,
-		})
-	end
-
-	local function addDropdown(tab, flag, name, values, default, map)
-		local entry = {
-			Value = map and map[default] or default,
-			Raw = default,
-		}
-		Options[flag] = entry
-		tab:CreateDropdown({
-			name = name,
-			options = values,
-			value = default,
-			flag = flag,
-			callback = function(value)
-				local selected = type(value) == "table" and value[1] or value
-				if selected == nil then
+				local numberValue = tonumber(value)
+				if not numberValue then
 					return
 				end
-				entry.Raw = selected
-				entry.Value = map and map[selected] or selected
+				entry.Value, entry.Raw = numberValue, numberValue
+				persist()
 			end,
 		})
+		if type(saved[idx]) == "number" and saved[idx] ~= entry.Value then
+			control:Set(math.clamp(saved[idx], cfg.Min, cfg.Max))
+		end
 	end
 
-	local survivalTab = window:CreateTab({ name = "Survival", icon = "shield" })
-	survivalTab:CreateSection({ name = "Hazard Avoidance" })
-	addToggle(survivalTab, "AvoidHazards", "Avoid Hazards", false)
-	addToggle(survivalTab, "Kite", "Keep Distance", false)
-	addSlider(survivalTab, "KiteDistance", "Safe Distance", 22, 8, 60)
+	local function addDropdown(tab, idx, cfg)
+		local names = cfg.Values
+		local defaultName = names[cfg.Default or 1]
+		local entry = {
+			Value = cfg.Map and cfg.Map[defaultName] or defaultName,
+			Raw = defaultName,
+		}
+		Options[idx] = entry
+		local control = tab:CreateDropdown({
+			name = cfg.Text,
+			options = names,
+			value = defaultName,
+			multiSelect = false,
+			flag = "MonkeyHub_" .. idx,
+			forgetState = true,
+			callback = function(selected)
+				local name = type(selected) == "table" and selected[1] or selected
+				if type(name) ~= "string" or not table.find(names, name) then
+					return
+				end
+				entry.Raw = name
+				entry.Value = cfg.Map and cfg.Map[name] or name
+				persist()
+			end,
+		})
+		if type(saved[idx]) == "string" and saved[idx] ~= entry.Raw and table.find(names, saved[idx]) then
+			control:Set(saved[idx])
+		end
+	end
+
+	window:CreateSection({ name = "Gameplay" })
+
+	local combatTab = window:CreateTab({ name = "Combat" })
+	combatTab:CreateSection({ name = "Targeting" })
+	addToggle(combatTab, "AutoFight", { Text = "Auto fight", Default = false })
+	addToggle(combatTab, "AimAssist", { Text = "Aim assist (manual fire)", Default = false })
+	addDropdown(combatTab, "AimMode", { Text = "Aim mode", Values = { "Game assist", "Override (risky)" }, Default = 1 })
+	addSlider(combatTab, "AssistCone", { Text = "Assist cone (deg)", Default = 180, Min = 20, Max = 180 })
+	addDropdown(combatTab, "TargetMode", { Text = "Target priority (override)", Values = { "Nearest", "Boss first", "Lowest HP" }, Default = 2 })
+	addToggle(combatTab, "RequireSight", { Text = "Only through clear line of sight", Default = true })
+	combatTab:CreateSection({ name = "Skills" })
+	addToggle(combatTab, "AutoSkills", { Text = "Auto class skills", Default = false })
+	addToggle(combatTab, "AutoUltimate", { Text = "Auto ultimate", Default = false })
+	addToggle(combatTab, "AutoTurret", { Text = "Auto turret", Default = false })
+	combatTab:CreateSection({ name = "Fire rate" })
+	addToggle(combatTab, "RapidFire", { Text = "Rapid fire", Default = false, Risky = true })
+	addSlider(combatTab, "RapidFireMult", { Text = "Fire rate multiplier", Default = 2, Min = 1, Max = 5, Increment = 0.5 })
+
+	local survivalTab = window:CreateTab({ name = "Survival" })
+	survivalTab:CreateSection({ name = "Dodging" })
+	addToggle(survivalTab, "AvoidHazards", { Text = "Dodge boss attacks / acid", Default = false })
+	addToggle(survivalTab, "Kite", { Text = "Kite the swarm (walk)", Default = false })
+	addSlider(survivalTab, "KiteDistance", { Text = "Kite distance", Default = 22, Min = 8, Max = 60 })
 	survivalTab:CreateSection({ name = "Flight" })
-	addToggle(survivalTab, "FlightOrbit", "Orbit Flight", false)
-	addToggle(survivalTab, "FlightNoclip", "Pass Through Obstacles", false)
-	addSlider(survivalTab, "FlightSpeed", "Flight Speed", 40, 16, 64)
+	addToggle(survivalTab, "FlightOrbit", { Text = "Flight orbit farm", Default = false, Risky = true })
+	addToggle(survivalTab, "FlightNoclip", { Text = "Noclip while flying", Default = false, Risky = true })
+	addSlider(survivalTab, "FlightSpeed", { Text = "Flight speed", Default = 40, Min = 16, Max = 64 })
 
-	local progressTab = window:CreateTab({ name = "Progress", icon = "chart-no-axes-column" })
+	local progressTab = window:CreateTab({ name = "Progress" })
 	progressTab:CreateSection({ name = "Upgrades" })
-	addToggle(progressTab, "AutoHealthUpgrade", "Auto Health Upgrade", false)
-	progressTab:CreateSection({ name = "Waves" })
-	addToggle(progressTab, "AutoSkip", "Auto Skip Waves", false)
-	progressTab:CreateSection({ name = "Chests" })
-	addToggle(progressTab, "AutoChest", "Auto Open Chests", false)
-	addSlider(progressTab, "ChestReserve", "Cash Reserve", 0, 0, 2000)
-	progressTab:CreateSection({ name = "Replay" })
-	addToggle(progressTab, "AutoReplay", "Auto Replay", false)
-	addToggle(progressTab, "ReExecute", "Run Again After Replay", true)
+	addToggle(progressTab, "AutoUpgrade", { Text = "Auto upgrade (gun, then health)", Default = false })
+	addToggle(progressTab, "AutoSkip", { Text = "Smart wave skip", Default = false })
+	progressTab:CreateSection({ name = "Loot" })
+	addToggle(progressTab, "AutoChest", { Text = "Auto open chests (walks there)", Default = false })
+	addSlider(progressTab, "ChestReserve", { Text = "Keep cash reserve", Default = 0, Min = 0, Max = 2000 })
+	progressTab:CreateSection({ name = "Runs" })
+	addToggle(progressTab, "AutoReplay", { Text = "Auto replay", Default = false })
+	addToggle(progressTab, "ReExecute", { Text = "Re-run hub after replay teleport", Default = true })
 
-	local statusTab = window:CreateTab({ name = "Status", icon = "activity" })
-	statusTab:CreateSection({ name = "Current Run" })
-	state.statusLabel = statusTab:CreateText({ name = "Run Status", text = "Loading..." })
+	local statusTab = window:CreateTab({ name = "Status" })
+	statusTab:CreateSection({ name = "Live run" })
+	local statusConsole = statusTab:CreateConsole({
+		name = "Run status",
+		text = "Loading...",
+		height = 170,
+		follow = true,
+		maxLines = 24,
+	})
+	state.statusLabel = {
+		SetText = function(_, value)
+			statusConsole:Append(tostring(value):gsub("\r?\n", " | "))
+		end,
+	}
 
-	local espTab = window:CreateTab({ name = "ESP", icon = "eye" })
+	window:CreateSection({ name = "Visuals" })
+
+	local espTab = window:CreateTab({ name = "ESP" })
 	espTab:CreateSection({ name = "Monkeys" })
-	addToggle(espTab, "MonkeyEsp", "Show Monkeys", false)
-	addDropdown(espTab, "EspColor", "Marker Color", { "Gold", "Red", "Cyan", "Purple", "Green" }, "Gold", ESP_COLORS)
+	addToggle(espTab, "MonkeyEsp", { Text = "Monkey ESP", Default = false })
+	addDropdown(espTab, "EspColor", {
+		Text = "Monkey color",
+		Values = { "Gold", "Red", "Cyan", "Purple", "Green" },
+		Default = 1,
+		Map = ESP_COLORS,
+	})
 	espTab:CreateSection({ name = "Bosses" })
-	addToggle(espTab, "BossEsp", "Show Boss", true)
+	addToggle(espTab, "BossEsp", { Text = "Boss ESP", Default = true })
 
-	local worldTab = window:CreateTab({ name = "World", icon = "sun" })
+	local worldTab = window:CreateTab({ name = "World" })
 	worldTab:CreateSection({ name = "Lighting" })
-	addToggle(worldTab, "Fullbright", "Fullbright", false, Misc.setFullbright)
+	addToggle(worldTab, "Fullbright", { Text = "Fullbright", Default = false, Callback = Misc.setFullbright })
 
-	local movementTab = window:CreateTab({ name = "Movement", icon = "person-standing" })
-	movementTab:CreateSection({ name = "Utility" })
-	addToggle(movementTab, "AntiAfk", "Anti AFK", true)
-	addToggle(movementTab, "InfiniteJump", "Infinite Jump", false)
-	movementTab:CreateSection({ name = "Movement" })
-	addToggle(movementTab, "WalkSpeed", "Enable Walk Speed", false)
-	addSlider(movementTab, "WalkSpeedValue", "Walk Speed", 22, 16, 40)
+	window:CreateSection({ name = "Player" })
 
-	local settingsTab = window:CreateTab({ name = "Settings", icon = "settings" })
-	settingsTab:CreateSection({ name = "Interface" })
+	local moveTab = window:CreateTab({ name = "Movement" })
+	moveTab:CreateSection({ name = "Utility" })
+	addToggle(moveTab, "AntiAfk", { Text = "Anti-AFK", Default = true })
+	moveTab:CreateSection({ name = "Movement" })
+	addToggle(moveTab, "WalkSpeed", { Text = "Walk speed", Default = false, Risky = true })
+	addSlider(moveTab, "WalkSpeedValue", { Text = "Speed", Default = 22, Min = 16, Max = 40 })
+	addToggle(moveTab, "InfiniteJump", { Text = "Infinite jump", Default = false, Risky = true })
+
+	window:CreateSection({ name = "System" })
+
+	local settingsTab = window:CreateTab({ name = "Settings" })
+	settingsTab:CreateSection({ name = "Menu" })
+	settingsTab:CreateText({
+		name = "Menu controls",
+		text = "RightCtrl opens and closes the menu. Preferences are saved to the existing MonkeyHub settings file.",
+	})
 	settingsTab:CreateButton({
-		name = "Unload Monkey Hub",
+		name = "Unload",
 		callback = function()
 			MonkeyHub.detach()
 		end,
 	})
+
+	-- Preserve the RightCtrl shortcut using the Gen2 hide/show lifecycle method.
+	maid:give(userInputService.InputBegan:Connect(function(input)
+		if input.KeyCode == Enum.KeyCode.RightControl and not userInputService:GetFocusedTextBox() then
+			window:ToggleHide()
+		end
+	end))
+end
+
+-- Aim override is registered once per session; the game keeps it, so it reads the live hub.
+local function hookAim()
+	if MonkeyHub.aimHooked then
+		return
+	end
+	MonkeyHub.aimHooked = true
+	Game.gun.AddAimOverride(function()
+		local hub = shared.MonkeyHub
+		if not hub or not hub.running or not hub.aimPoint then
+			return nil
+		end
+		return hub.aimPoint()
+	end)
+	-- Same hook Ricochet uses: returning a cone cosine makes the game's AimAssist pick the target.
+	Game.gun.AddAutoTarget(function()
+		local hub = shared.MonkeyHub
+		if not hub or not hub.running or not hub.autoCone then
+			return nil
+		end
+		return hub.autoCone()
+	end)
+end
+
+---@return Vector3?
+function MonkeyHub.aimPoint()
+	return state.skillAimPoint or state.targetPoint
+end
+
+---@return number?
+function MonkeyHub.autoCone()
+	if not Options or Options.AimMode.Value ~= "Game assist" then
+		return nil
+	end
+	if not enabled("AutoFight") and not enabled("AimAssist") then
+		return nil
+	end
+	return math.cos(math.rad(Options.AssistCone.Value))
 end
 
 local function waitForClient()
@@ -1152,6 +1801,7 @@ local function waitForClient()
 	end
 end
 
+---@param message any
 local function onInitError(message)
 	warn("[MonkeyHub] init failed:", message, debug.traceback())
 	pcall(MonkeyHub.detach)
@@ -1165,19 +1815,18 @@ function MonkeyHub.detach()
 	if state.skipOwned and Game.voteRemote and localPlayer:GetAttribute("AutoSkip") == true then
 		pcall(Game.voteRemote.FireServer, Game.voteRemote, "Auto", false)
 	end
+	if state.tool then
+		pcall(state.tool.Deactivate, state.tool)
+	end
+	state.targetPoint, state.skillAimPoint = nil, nil
 	pcall(Flight.stop)
 	pcall(Misc.setFullbright, false)
-	if Misc.baseSpeed and Misc.speedHumanoid and Misc.speedHumanoid.Parent then
+	if state.buffs and state.originalFireRate then
 		pcall(function()
-			Misc.speedHumanoid.WalkSpeed = Misc.baseSpeed
+			state.buffs.fireRate = state.originalFireRate
 		end)
+		state.originalFireRate = false
 	end
-	Misc.baseSpeed, Misc.speedHumanoid = nil, nil
-	local _, humanoid = getCharacter()
-	if humanoid then
-		pcall(humanoid.Move, humanoid, Vector3.zero)
-	end
-	Chest.target, Chest.planning = nil, false
 	maid:clean()
 	if Library then
 		pcall(Library.Unload, Library)
@@ -1193,17 +1842,12 @@ function MonkeyHub.init()
 	loadGame()
 	MonkeyHub.running = true
 	hookHazards()
+	hookAim()
+	hookRapidFire()
 	buildUi()
 	Esp.init()
 	Misc.init()
-	maid:give(runService.RenderStepped:Connect(function()
-		local ok, err = pcall(Esp.render)
-		if not ok and not state.espWarned then
-			state.espWarned = true
-			warn("[MonkeyHub] ESP paused after render error: " .. tostring(err))
-			pcall(Esp.hide, 1)
-		end
-	end))
+	maid:give(runService.RenderStepped:Connect(Esp.render))
 	local elapsed = 0
 	maid:give(runService.Heartbeat:Connect(function(dt)
 		elapsed += dt
@@ -1225,18 +1869,14 @@ function MonkeyHub.init()
 			MonkeyHub.detach()
 		end
 	end))
-	Library:Notify("Monkey Hub loaded.", 5)
+	Library:Notify("Monkey Hub loaded. RightCtrl toggles the menu.", 5)
 end
 
+-- Singleton: unload any previous copy and keep its one-time aim hook.
 if shared.MonkeyHub then
+	MonkeyHub.aimHooked = shared.MonkeyHub.aimHooked
 	pcall(shared.MonkeyHub.detach)
 end
 shared.MonkeyHub = MonkeyHub
 
-if game.PlaceId == LOBBY_PLACE_ID then
-	warn("[MonkeyHub] Lobby detected. Press PLAY, wait until the match loads, then execute MonkeyHub again.")
-elseif game.PlaceId ~= MATCH_PLACE_ID then
-	warn("[MonkeyHub] Unsupported place ID: " .. tostring(game.PlaceId))
-else
-	xpcall(MonkeyHub.init, onInitError)
-end
+xpcall(MonkeyHub.init, onInitError)
