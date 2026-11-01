@@ -7,23 +7,15 @@ loadstring("getfenv().PP_SCRAMBLE_NUM = function(...) return ... end")()
 loadstring("getfenv().PP_SCRAMBLE_STR = function(...) return ... end")()
 loadstring("getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end")()
 
----@module MonkeyHub
--- Survive a Million Monkeys hub. Every server-bound action goes through the game's own
--- client code or a remote the game's own UI fires, with the same arguments, gated by the
--- same attributes the UI reads, and throttled to button-press rates.
 local MonkeyHub = {}
 
--- Maid: owns every connection, instance, drawing and cleanup function so detach() leaves nothing.
 local Maid = {}
 Maid.__index = Maid
 
----@return table
 function Maid.new()
 	return setmetatable({ tasks = {} }, Maid)
 end
 
----@param task any
----@return any
 function Maid:give(task)
 	table.insert(self.tasks, task)
 	return task
@@ -48,7 +40,6 @@ function Maid:clean()
 	end
 end
 
--- Constants.
 local LOBBY_PLACE_ID = 99409088950210
 local MATCH_PLACE_ID = 115317125060158
 
@@ -58,10 +49,10 @@ local CONFIG = {
 	REEXEC_SOURCE = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/primelyn123-jpg/monkey-hub/main/MonkeyHub.lua"))()',
 	READY_TIMEOUT = 90,
 	TICK_RATE = 0.08,
-	BOSS_TICK_RATE = 0.03,
+	BOSS_TICK_RATE = 0.06,
 	SCAN_MAX = 4096,
 	SCAN_RADIUS = 2000,
-	ESP_MAX = 150,
+	ESP_MAX = 100,
 	ESP_RADIUS = 600,
 	MIN_FIRE_GAP = 0.06,
 	BOSS_DISTANCE = 90,
@@ -71,15 +62,14 @@ local CONFIG = {
 	SKIP_ENEMY_LIMIT = 400,
 	SKIP_RESUME_ENEMIES = 300,
 	FLIGHT_HEIGHT = 2.5,
-	-- AimAssist.CONE_RANGE measured live 2026-10-24: the game's own assist ignores monkeys past this.
+
 	GAME_ASSIST_RANGE = 250,
 	CHEST_REACH = 7,
 	CHEST_TIMEOUT = 30,
-	-- Minimum seconds between two fires of the same remote; a player can't click faster than this.
+
 	REMOTE_GAPS = { Vote = 1, Upgrade = 1, Ability = 1, GameAction = 10 },
 }
 
--- Services.
 local playersService = game:GetService("Players")
 local replicatedStorage = game:GetService("ReplicatedStorage")
 local runService = game:GetService("RunService")
@@ -88,7 +78,6 @@ local lightingService = game:GetService("Lighting")
 local virtualUser = game:GetService("VirtualUser")
 local pathfindingService = game:GetService("PathfindingService")
 
--- State.
 local localPlayer = playersService.LocalPlayer
 local maid = Maid.new()
 local Game = {}
@@ -112,7 +101,6 @@ local state = {
 local sightParams = RaycastParams.new()
 sightParams.FilterType = Enum.RaycastFilterType.Include
 
----@return table
 local function newCrowd()
 	return { x = {}, y = {}, z = {}, r = {}, hp = {}, id = {}, d = {} }
 end
@@ -121,9 +109,6 @@ local crowd = newCrowd()
 local skillCrowd = newCrowd()
 local espCrowd = newCrowd()
 
--- Game ModuleScripts must be required at identity 2, otherwise they inherit the executor env.
----@param module Instance
----@return any
 local function safeRequire(module)
 	local previous = getthreadidentity and getthreadidentity() or 8
 	if setthreadidentity then
@@ -139,9 +124,6 @@ local function safeRequire(module)
 	return result
 end
 
--- Controllers live under PlayerScripts; fall back to the loaded-module list if they were moved.
----@param name string
----@return Instance?
 local function findModule(name)
 	local scripts = localPlayer:FindFirstChild("PlayerScripts")
 	local module = scripts and scripts:FindFirstChild(name, true)
@@ -159,9 +141,6 @@ local function findModule(name)
 	return nil
 end
 
----@param root Instance
----@param path string
----@return Instance
 local function waitPath(root, path)
 	local current = root
 	for name in path:gmatch("[^%.]+") do
@@ -171,8 +150,6 @@ local function waitPath(root, path)
 	return current
 end
 
----@param folder Instance
----@return table
 local function requireFolder(folder)
 	local result = {}
 	for _, module in folder:GetChildren() do
@@ -187,7 +164,6 @@ local function requireFolder(folder)
 	return result
 end
 
--- Resolve every module and remote once; a missing piece means the game updated and the hub stops.
 local function loadGame()
 	local unitsModule = findModule("UnitViewController")
 	local placementModule = findModule("PlacementController")
@@ -215,11 +191,6 @@ local function loadGame()
 	assert(type(Game.gun.AddAimOverride) == "function", "GunRigController.AddAimOverride missing (game updated?)")
 end
 
--- The single exit for every remote: per-remote gap, counted, never faster than a human click.
----@param key string
----@param group string
----@param remote RemoteEvent
----@return boolean
 function Net.fire(key, group, remote, ...)
 	local now = os.clock()
 	if now - (Net.last[key] or -math.huge) < CONFIG.REMOTE_GAPS[group] then
@@ -232,15 +203,11 @@ function Net.fire(key, group, remote, ...)
 	return true
 end
 
----@param name string
----@return boolean
 local function enabled(name)
 	local toggle = Toggles and Toggles[name]
 	return toggle ~= nil and toggle.Value == true
 end
 
--- Fire-rate multiplier from the Rapid fire toggle (1 when off).
----@return number
 local function rapidMultiplier()
 	if not enabled("RapidFire") then
 		return 1
@@ -248,7 +215,6 @@ local function rapidMultiplier()
 	return math.max(1, tonumber(Options and Options.RapidFireMult and Options.RapidFireMult.Value) or 1)
 end
 
--- Wraps GunKit Buffs.fireRate so the game's own firing loop runs faster. The server may still cap cadence.
 local function hookRapidFire()
 	if state.originalFireRate then
 		return
@@ -277,7 +243,6 @@ local function hookRapidFire()
 	end
 end
 
----@return Model?, Humanoid?, BasePart?
 local function getCharacter()
 	local character = localPlayer.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -285,17 +250,10 @@ local function getCharacter()
 	return character, humanoid, root
 end
 
----@param i number
----@param set table
----@return Vector3
 local function crowdPoint(set, i)
 	return Vector3.new(set.x[i], set.y[i], set.z[i])
 end
 
----@param point Vector3
----@param radius number
----@param count number
----@return number
 local function clusterCount(point, radius, count)
 	local total = 0
 	for i = 1, count do
@@ -306,10 +264,6 @@ local function clusterCount(point, radius, count)
 	return total
 end
 
--- Line of sight against map geometry only; monkeys are client-rendered views, not blockers.
----@param origin Vector3
----@param point Vector3
----@return boolean
 local function hasLineOfSight(origin, point)
 	if not enabled("RequireSight") then
 		return true
@@ -324,8 +278,6 @@ local function hasLineOfSight(origin, point)
 	return not hit or hit.Distance >= delta.Magnitude - 4
 end
 
--- Hazards: telegraphs arrive through the game's own OnClientEvent feeds; we only listen.
----@param zone table
 local function addHazard(zone)
 	state.hazardSequence += 1
 	state.zones["persistent_" .. state.hazardSequence] = zone
@@ -379,9 +331,6 @@ local function hookHazards()
 	end))
 end
 
----@param point Vector3
----@param serverNow number
----@return boolean
 local function dangerous(point, serverNow)
 	local margin = state.bossId and 16 or 10
 	if state.bossPoint then
@@ -428,10 +377,6 @@ local function dangerous(point, serverNow)
 	return false
 end
 
----@param from Vector3
----@param to Vector3
----@param serverNow number
----@return boolean
 local function safePath(from, to, serverNow)
 	local steps = math.max(2, math.ceil((to - from).Magnitude / 8))
 	local leftDanger = not dangerous(from, serverNow)
@@ -447,10 +392,6 @@ local function safePath(from, to, serverNow)
 	return leftDanger
 end
 
--- Pick the closest safe point to where we wanted to go; ring search around the root.
----@param root BasePart
----@param destination Vector3
----@return Vector3
 local function dodge(root, destination)
 	state.avoiding = false
 	if not enabled("AvoidHazards") then
@@ -480,10 +421,6 @@ local function dodge(root, destination)
 	return best or root.Position
 end
 
--- Boss tracking, health-based retreat and acid puddles.
----@param root BasePart
----@param humanoid Humanoid
----@param now number
 local function survival(root, humanoid, now)
 	state.healthRatio = humanoid.Health / math.max(humanoid.MaxHealth, 1)
 	if state.lastHealth and humanoid.Health < state.lastHealth - 3 then
@@ -533,7 +470,6 @@ local function survival(root, humanoid, now)
 	end
 end
 
--- Upgrade shop: same remote and argument the shop button sends, only when the shop says it's buyable.
 local function upgrades()
 	local weapon = localPlayer:GetAttribute("WeaponUpgradeAvailable")
 	local health = localPlayer:GetAttribute("HealthUpgradeAvailable")
@@ -554,10 +490,6 @@ local function upgrades()
 	Net.fire("Upgrade", "Upgrade", Game.upgradeRemote, kind)
 end
 
--- Wave auto-skip vote: only while it's safe to pull more monkeys in.
----@param root BasePart
----@param humanoid Humanoid
----@param now number
 local function adaptiveSkip(root, humanoid, now)
 	if now - state.lastSkipScan < 0.4 then
 		return
@@ -600,10 +532,6 @@ local function adaptiveSkip(root, humanoid, now)
 	end
 end
 
--- Weapon handling: equip the first real gun (a Tool with a WeaponConfig).
----@param humanoid Humanoid
----@param character Model
----@return Tool?
 local function equipGun(humanoid, character)
 	local equipped = character:FindFirstChildOfClass("Tool")
 	if equipped and equipped:FindFirstChild("WeaponConfig") then
@@ -632,12 +560,6 @@ local function equipGun(humanoid, character)
 	return candidate
 end
 
--- Tool-based skills (e.g. grenades) equip, click once, then the gun comes back.
----@param name string
----@param humanoid Humanoid
----@param character Model
----@param now number
----@return boolean
 local function activateSkillTool(name, humanoid, character, now)
 	if now < (state.skillToolUntil or 0) then
 		return false
@@ -668,9 +590,6 @@ local function activateSkillTool(name, humanoid, character, now)
 	return true
 end
 
----@param root BasePart
----@param stats table
----@return Vector3?
 local function skillTarget(root, stats)
 	local range = stats.Range or 200
 	local best, bestCount
@@ -690,8 +609,6 @@ local function skillTarget(root, stats)
 	return best
 end
 
----@param threshold number
----@return boolean
 local function teamNeedsHeal(threshold)
 	for _, player in playersService:GetPlayers() do
 		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
@@ -702,8 +619,6 @@ local function teamNeedsHeal(threshold)
 	return false
 end
 
----@param kind string
----@return number
 local function placementCount(kind)
 	local count = 0
 	local folder = workspace:FindFirstChild("Placements")
@@ -715,14 +630,6 @@ local function placementCount(kind)
 	return count
 end
 
--- Cast one skill the way its own keybind would: tool skills click the tool, placed skills go
--- through PlacementController, self/ultimate skills fire the ability remote with the game's aim.
----@param id string
----@param stats table
----@param humanoid Humanoid
----@param now number
----@param aim Vector3?
----@return boolean
 local function castSkill(id, stats, humanoid, now, aim)
 	if now - (state.skillLast[id] or -100) < math.max(1, stats.Swing or 0) then
 		return false
@@ -754,11 +661,6 @@ local function castSkill(id, stats, humanoid, now, aim)
 	return true
 end
 
----@param id string
----@param stats table
----@param root BasePart
----@param hp number
----@return boolean, Vector3?
 local function skillWanted(id, stats, root, hp)
 	local target = skillTarget(root, stats)
 	local count = state.skillEnemyCount or 0
@@ -793,10 +695,6 @@ local function skillWanted(id, stats, root, hp)
 	return false, nil
 end
 
--- Primary/secondary class skills, gated on the same ReadyAt/Cost/Cash attributes the HUD shows.
----@param root BasePart
----@param humanoid Humanoid
----@param now number
 local function useClassSkills(root, humanoid, now)
 	if not enabled("AutoSkills") then
 		return
@@ -826,9 +724,6 @@ local function useClassSkills(root, humanoid, now)
 	end
 end
 
----@param root BasePart
----@param humanoid Humanoid
----@param now number
 local function useUltimate(root, humanoid, now)
 	if not enabled("AutoUltimate") then
 		return
@@ -872,9 +767,6 @@ local function useUltimate(root, humanoid, now)
 	end
 end
 
--- Turret: drop one where we stand when monkeys are in its range and the slot is ready.
----@param root BasePart
----@param now number
 local function autoTurret(root, now)
 	if not enabled("AutoTurret") or state.bossId or now - state.lastTurret < 2 then
 		return
@@ -901,9 +793,6 @@ local function autoTurret(root, now)
 	Game.placement:Activate("Turret")
 end
 
--- Ground movement: walk away from the swarm and out of telegraphs with Humanoid:MoveTo.
----@param humanoid Humanoid
----@param root BasePart
 local function kite(humanoid, root)
 	if enabled("FlightOrbit") then
 		return
@@ -936,11 +825,8 @@ local function kite(humanoid, root)
 	end
 end
 
--- Chests: walk there with pathfinding and press the prompt like a player would (10-stud server range).
 local Chest = { tried = {}, lastStart = 0 }
 
----@param chest Model
----@return boolean
 function Chest.isOpened(chest)
 	for _, id in string.split(localPlayer:GetAttribute("OpenedChests") or "", ",") do
 		if id == chest.Name then
@@ -950,8 +836,6 @@ function Chest.isOpened(chest)
 	return false
 end
 
----@param root BasePart
----@return Model?, ProximityPrompt?
 function Chest.pick(root)
 	local folder = workspace:FindFirstChild("Chests")
 	local budget = (localPlayer:GetAttribute("Cash") or 0) - Options.ChestReserve.Value
@@ -973,8 +857,6 @@ function Chest.pick(root)
 	return best, bestPrompt
 end
 
----@param chest Model
----@param root BasePart
 function Chest.plan(chest, root)
 	local path = pathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
 	local ok = pcall(path.ComputeAsync, path, root.Position, chest:GetPivot().Position)
@@ -982,11 +864,6 @@ function Chest.plan(chest, root)
 	Chest.waypointIndex = 2
 end
 
--- Returns true while a chest run owns movement, so kiting stays out of the way.
----@param humanoid Humanoid
----@param root BasePart
----@param now number
----@return boolean
 function Chest.step(humanoid, root, now)
 	if not enabled("AutoChest") or state.bossId or (state.healthRatio or 1) < 0.6 or enabled("FlightOrbit") then
 		Chest.target = nil
@@ -1040,10 +917,8 @@ function Chest.step(humanoid, root, now)
 	return true
 end
 
--- Flight orbit (risky): LinearVelocity circle around the map center, optional local noclip.
 local Flight = { obstacleState = {}, obstacleConnections = {} }
 
----@param object Instance
 function Flight.disableObstacle(object)
 	local original = Flight.obstacleState[object]
 	if not original then
@@ -1088,9 +963,6 @@ function Flight.stop()
 	Flight.root, Flight.attachment, Flight.velocity, Flight.center = nil, nil, nil, nil
 end
 
----@param humanoid Humanoid
----@param root BasePart
----@param destination Vector3
 function Flight.flyTo(humanoid, root, destination)
 	if Flight.root ~= root or not Flight.velocity or not Flight.velocity.Parent then
 		Flight.stop()
@@ -1126,9 +998,6 @@ function Flight.flyTo(humanoid, root, destination)
 	Flight.velocity.VectorVelocity = delta.Magnitude > 0.6 and delta.Unit * math.min(speed, delta.Magnitude * 3) or Vector3.zero
 end
 
----@param humanoid Humanoid
----@param root BasePart
----@param now number
 function Flight.orbit(humanoid, root, now)
 	local map = workspace:FindFirstChild("Map")
 	if not map then
@@ -1160,11 +1029,6 @@ function Flight.orbit(humanoid, root, now)
 	Flight.flyTo(humanoid, root, dodge(root, destination))
 end
 
--- Targeting: nearest / boss / lowest HP inside the weapon's own max range, with lead.
----@param root BasePart
----@param range number
----@param count number
----@return number?, number
 local function pickTarget(root, range, count)
 	local mode = Options.TargetMode.Value
 	local best, bestScore, bestDistance = nil, math.huge, math.huge
@@ -1192,10 +1056,6 @@ local function pickTarget(root, range, count)
 	return best, bestDistance
 end
 
----@param humanoid Humanoid
----@param character Model
----@param root BasePart
----@param now number
 local function combat(humanoid, character, root, now)
 	local wantsAim = enabled("AutoFight") or enabled("AimAssist")
 	if not wantsAim or now < (state.skillToolUntil or 0) or now < (state.gunResumeAt or 0) then
@@ -1242,7 +1102,7 @@ local function combat(humanoid, character, root, now)
 	end
 	state.targetId, state.lastTargetPoint, state.targetAt, state.targetVelocity = crowd.id[best], point, now, velocity
 	state.enemyPoint, state.enemyHealth, state.distance = point, crowd.hp[best], distance
-	-- Game assist: leave the aim point to the game's AimAssist (it keeps its own wall check and lead).
+
 	state.targetPoint = not gameAim and point + velocity * math.min(distance / (projectile.speed or 200), 0.5) or nil
 	if not enabled("AutoFight") then
 		return
@@ -1257,9 +1117,6 @@ local function combat(humanoid, character, root, now)
 	end
 end
 
--- End of run: press Replay the way the end screen does, re-arming the hub for the next server.
----@param humanoid Humanoid?
----@return boolean
 local function replay(humanoid)
 	local dead = localPlayer:GetAttribute("Dead") == true or (humanoid and humanoid.Health <= 0)
 	local ended = Game.waves:GetAttribute("Phase") == "Complete"
@@ -1285,16 +1142,13 @@ local function replay(humanoid)
 	return true
 end
 
----@param value any
----@return string
 local function formatNumber(value)
 	local digits = string.format("%.0f", math.max(0, tonumber(value) or 0))
 	return (digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
 end
 
----@param now number
 local function updateStatus(now)
-	if now - state.lastStatus < 0.5 or not state.statusLabel then
+	if now - state.lastStatus < 1 or not state.statusLabel then
 		return
 	end
 	state.lastStatus = now
@@ -1318,7 +1172,6 @@ local function updateStatus(now)
 	))
 end
 
--- Main tick: one pcall per tick, ten errors in a row unloads the hub.
 local function update()
 	local now = os.clock()
 	local character, humanoid, root = getCharacter()
@@ -1357,79 +1210,220 @@ local function update()
 	combat(humanoid, character, root, now)
 end
 
--- ESP: Drawing pool fed straight from UnitViewController.crowd, so it costs no instances.
-local Esp = { dots = {} }
+local ESP_COLORS = {
+	Gold = Color3.fromRGB(255, 200, 60),
+	Red = Color3.fromRGB(255, 70, 90),
+	Cyan = Color3.fromRGB(0, 212, 255),
+	Purple = Color3.fromRGB(124, 92, 255),
+	Green = Color3.fromRGB(80, 230, 130),
+}
+
+local Esp = {
+	entries = {},
+	visibleCount = 0,
+	lastRender = 0,
+	interval = 1 / 20,
+	ready = false,
+}
+
+local function createDrawing(kind)
+	if not Drawing then
+		return nil
+	end
+	local ok, object = pcall(Drawing.new, kind)
+	if not ok or not object then
+		return nil
+	end
+	return maid:give(object)
+end
+
+local function hideEspEntry(entry)
+	if entry.fill then entry.fill.Visible = false end
+	if entry.box then entry.box.Visible = false end
+	if entry.label then entry.label.Visible = false end
+end
+
+function Esp.hideMonkeys(from)
+	from = from or 1
+	for i = from, Esp.visibleCount do
+		local entry = Esp.entries[i]
+		if entry then
+			hideEspEntry(entry)
+		end
+	end
+	if from <= 1 then
+		Esp.visibleCount = 0
+	else
+		Esp.visibleCount = math.min(Esp.visibleCount, from - 1)
+	end
+end
+
+function Esp.hideBoss()
+	if Esp.bossFill then Esp.bossFill.Visible = false end
+	if Esp.bossBox then Esp.bossBox.Visible = false end
+	if Esp.bossLabel then Esp.bossLabel.Visible = false end
+end
 
 function Esp.init()
 	if not Drawing then
 		return
 	end
 	for i = 1, CONFIG.ESP_MAX do
-		local dot = Drawing.new("Circle")
-		dot.Filled = true
-		dot.NumSides = 12
-		dot.Thickness = 1
-		dot.Transparency = 1
-		dot.Visible = false
-		Esp.dots[i] = maid:give(dot)
+		local fill = createDrawing("Square")
+		local box = createDrawing("Square")
+		local label = createDrawing("Text")
+		if not fill or not box or not label then
+			break
+		end
+		fill.Filled = true
+		fill.Thickness = 1
+		fill.Transparency = 0.14
+		fill.Visible = false
+		box.Filled = false
+		box.Thickness = 1.5
+		box.Transparency = 1
+		box.Visible = false
+		label.Center = true
+		label.Outline = true
+		label.Size = 13
+		label.Color = Color3.fromRGB(245, 248, 255)
+		label.Visible = false
+		Esp.entries[i] = { fill = fill, box = box, label = label }
 	end
-	Esp.boss = maid:give(Drawing.new("Text"))
-	Esp.boss.Center = true
-	Esp.boss.Outline = true
-	Esp.boss.Size = 18
-	Esp.boss.Color = Color3.fromRGB(255, 80, 80)
-	Esp.boss.Visible = false
+	Esp.bossFill = createDrawing("Square")
+	Esp.bossBox = createDrawing("Square")
+	Esp.bossLabel = createDrawing("Text")
+	if Esp.bossFill and Esp.bossBox and Esp.bossLabel then
+		Esp.bossFill.Filled = true
+		Esp.bossFill.Transparency = 0.18
+		Esp.bossFill.Visible = false
+		Esp.bossBox.Filled = false
+		Esp.bossBox.Thickness = 2
+		Esp.bossBox.Transparency = 1
+		Esp.bossBox.Visible = false
+		Esp.bossLabel.Center = true
+		Esp.bossLabel.Outline = true
+		Esp.bossLabel.Size = 15
+		Esp.bossLabel.Color = Color3.fromRGB(255, 100, 110)
+		Esp.bossLabel.Visible = false
+	end
+	Esp.ready = #Esp.entries > 0
 end
 
-function Esp.hide(from)
-	for i = from, #Esp.dots do
-		Esp.dots[i].Visible = false
+local function projectEspBox(camera, point, heightStuds)
+	local top = camera:WorldToViewportPoint(point + Vector3.new(0, heightStuds * 0.62, 0))
+	local bottom = camera:WorldToViewportPoint(point - Vector3.new(0, heightStuds * 0.38, 0))
+	if top.Z <= 0 or bottom.Z <= 0 then
+		return nil
+	end
+	local height = math.abs(bottom.Y - top.Y)
+	if height < 4 or height > 420 then
+		return nil
+	end
+	local width = height * 0.58
+	local x = top.X - width * 0.5
+	local y = math.min(top.Y, bottom.Y)
+	local viewport = camera.ViewportSize
+	if x + width < 0 or x > viewport.X or y + height < 0 or y > viewport.Y then
+		return nil
+	end
+	return Vector2.new(x, y), Vector2.new(width, height)
+end
+
+local function drawEspEntry(entry, position, size, color, labelText, showDetails)
+	entry.fill.Position = position
+	entry.fill.Size = size
+	entry.fill.Color = color
+	entry.fill.Visible = true
+	entry.box.Position = position
+	entry.box.Size = size
+	entry.box.Color = color
+	entry.box.Visible = true
+	if showDetails then
+		entry.label.Text = labelText
+		entry.label.Position = Vector2.new(position.X + size.X * 0.5, math.max(2, position.Y - 16))
+		entry.label.Visible = true
+	else
+		entry.label.Visible = false
 	end
 end
 
 function Esp.render()
-	if not Drawing or not Esp.boss then
+	if not Esp.ready then
 		return
 	end
+	local now = os.clock()
 	local camera = workspace.CurrentCamera
-	if not enabled("MonkeyEsp") or not camera then
-		Esp.hide(1)
-	else
+	if not camera then
+		Esp.hideMonkeys()
+		Esp.hideBoss()
+		return
+	end
+	if now - Esp.lastRender < Esp.interval then
+		return
+	end
+	Esp.lastRender = now
+
+	if enabled("MonkeyEsp") then
 		local focus = camera.CFrame.Position
-		local count = Game.units.crowd(focus.X, focus.Z, CONFIG.ESP_RADIUS, CONFIG.ESP_MAX, espCrowd)
-		local color = Options.EspColor and Options.EspColor.Value or Color3.fromRGB(255, 200, 60)
+		local distanceLimit = Options.EspDistance and Options.EspDistance.Value or CONFIG.ESP_RADIUS
+		local count = Game.units.crowd(focus.X, focus.Z, distanceLimit, CONFIG.ESP_MAX, espCrowd)
+		local color = Options.EspColor and Options.EspColor.Value or ESP_COLORS.Gold
+		local showDetails = not Options.EspDetails or Options.EspDetails.Value
+		local maxDistanceSquared = distanceLimit * distanceLimit
 		local used = 0
-		for i = 1, count do
-			if espCrowd.hp[i] <= 0 then
+		for i = 1, math.min(count, #Esp.entries) do
+			local hp = espCrowd.hp[i]
+			if hp <= 0 then
 				continue
 			end
-			local screen, onScreen = camera:WorldToViewportPoint(crowdPoint(espCrowd, i))
-			if not onScreen then
+			local point = crowdPoint(espCrowd, i)
+			local delta = point - focus
+			local distanceSquared = delta:Dot(delta)
+			if distanceSquared > maxDistanceSquared then
+				continue
+			end
+			local position, size = projectEspBox(camera, point, 7)
+			if not position then
 				continue
 			end
 			used += 1
-			local dot = Esp.dots[used]
-			dot.Position = Vector2.new(screen.X, screen.Y)
-			dot.Radius = math.clamp(300 / math.max(screen.Z, 1), 2, 9)
-			dot.Color = espCrowd.id[i] == state.bossId and Color3.fromRGB(255, 60, 60) or color
-			dot.Visible = true
+			local entryColor = espCrowd.id[i] == state.bossId and Color3.fromRGB(255, 85, 95) or color
+			local label = string.format("MONKEY  %s HP  %dm", formatNumber(hp), math.floor(math.sqrt(distanceSquared)))
+			drawEspEntry(Esp.entries[used], position, size, entryColor, label, showDetails)
 		end
-		Esp.hide(used + 1)
+		Esp.hideMonkeys(used + 1)
+		Esp.visibleCount = used
+	else
+		Esp.hideMonkeys()
 	end
-	if not enabled("BossEsp") or not camera or not state.bossPoint then
-		Esp.boss.Visible = false
-		return
+
+	if enabled("BossEsp") and state.bossPoint and Esp.bossBox and Esp.bossFill and Esp.bossLabel then
+		local position, size = projectEspBox(camera, state.bossPoint, 10)
+		if position then
+			local red = Color3.fromRGB(255, 65, 80)
+			Esp.bossFill.Position = position
+			Esp.bossFill.Size = size
+			Esp.bossFill.Color = red
+			Esp.bossFill.Visible = true
+			Esp.bossBox.Position = position
+			Esp.bossBox.Size = size
+			Esp.bossBox.Color = red
+			Esp.bossBox.Visible = true
+			local distance = math.floor((state.bossPoint - camera.CFrame.Position).Magnitude)
+			Esp.bossLabel.Text = string.format("BOSS  %s  %s HP  %dm", tostring(state.bossName or "Unknown"), formatNumber(state.bossHealth), distance)
+			Esp.bossLabel.Position = Vector2.new(position.X + size.X * 0.5, math.max(2, position.Y - 18))
+			Esp.bossLabel.Visible = true
+		else
+			Esp.hideBoss()
+		end
+	else
+		Esp.hideBoss()
 	end
-	local screen, onScreen = camera:WorldToViewportPoint(state.bossPoint + Vector3.new(0, 8, 0))
-	Esp.boss.Visible = onScreen
-	Esp.boss.Position = Vector2.new(screen.X, screen.Y)
-	Esp.boss.Text = string.format("%s  %s hp", tostring(state.bossName), tostring(state.bossHealth))
 end
 
--- Local-only quality of life: fullbright, anti-AFK, walk speed, infinite jump.
 local Misc = { lighting = nil }
 
----@param on boolean
 function Misc.setFullbright(on)
 	if on and not Misc.lighting then
 		Misc.lighting = {
@@ -1467,7 +1461,16 @@ function Misc.init()
 			humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
 		end
 	end))
+	local lastSpeedCheck = 0
 	maid:give(runService.Heartbeat:Connect(function()
+		local now = os.clock()
+		if now - lastSpeedCheck < 0.1 then
+			return
+		end
+		lastSpeedCheck = now
+		if not enabled("WalkSpeed") and not Misc.baseSpeed then
+			return
+		end
 		local _, humanoid = getCharacter()
 		if not humanoid then
 			return
@@ -1482,16 +1485,6 @@ function Misc.init()
 	end))
 end
 
--- Monkey colors offered by the ESP dropdown (replaces the Obsidian color picker).
-local ESP_COLORS = {
-	Gold = Color3.fromRGB(255, 200, 60),
-	Red = Color3.fromRGB(255, 70, 90),
-	Cyan = Color3.fromRGB(0, 212, 255),
-	Purple = Color3.fromRGB(124, 92, 255),
-	Green = Color3.fromRGB(80, 230, 130),
-}
-
----@return table
 local function readSettings()
 	if not (isfile and readfile and isfile(CONFIG.SETTINGS_FILE)) then
 		return {}
@@ -1502,7 +1495,6 @@ local function readSettings()
 	return ok and type(data) == "table" and data or {}
 end
 
--- Load the official Sirius Rayfield Gen2 stable build.
 local function loadRayfield()
 	local ok, library = pcall(function()
 		local source = game:HttpGet(CONFIG.RAYFIELD_URL)
@@ -1516,29 +1508,56 @@ local function loadRayfield()
 	return library
 end
 
+local function waitForStableViewport()
+	local deadline = os.clock() + 8
+	local previousSize
+	local stableSince
+	while os.clock() < deadline do
+		local camera = workspace.CurrentCamera
+		local size = camera and camera.ViewportSize
+		if size and size.X > 0 and size.Y > 0 then
+			if previousSize and previousSize == size then
+				stableSince = stableSince or os.clock()
+				if os.clock() - stableSince >= 2 then
+					return
+				end
+			else
+				previousSize = size
+				stableSince = nil
+			end
+		else
+			previousSize = nil
+			stableSince = nil
+		end
+		task.wait(0.1)
+	end
+	task.wait(1)
+end
+
 local function buildUi()
 	local Rayfield = loadRayfield()
+	waitForStableViewport()
 	local saved = readSettings()
-
 	Toggles, Options = {}, {}
+
 	local window = Rayfield:CreateWindow({
 		name = "Monkey Hub",
 		subtitle = "Survive a Million Monkeys",
 		theme = "cobalt",
 		sidebarLayout = true,
 		showName = "Monkey Hub",
+		configuration = {
+			autoSave = false,
+			autoLoad = false,
+			fileName = "MonkeyHub_Gen2",
+			customFolder = "MonkeyHub",
+		},
 	})
 
 	local windowUnloaded = false
-
-	-- Keep the interface consumed by the rest of the hub stable.
 	Library = {
 		Notify = function(_, message, duration)
-			window:Notify({
-				title = "Monkey Hub",
-				content = tostring(message),
-				duration = duration or 4,
-			})
+			window:Notify({ title = "Monkey Hub", content = tostring(message), duration = duration or 4 })
 		end,
 		Unload = function()
 			if not windowUnloaded then
@@ -1548,7 +1567,6 @@ local function buildUi()
 		end,
 	}
 
-	-- Preserve the existing settings file so prior MonkeyHub preferences remain compatible.
 	local persistQueued = false
 	local function persist()
 		if persistQueued then
@@ -1578,7 +1596,8 @@ local function buildUi()
 		local entry = { Value = cfg.Default == true, Text = cfg.Text }
 		Toggles[idx] = entry
 		local control = tab:CreateToggle({
-			name = cfg.Risky and (cfg.Text .. " (risky)") or cfg.Text,
+			name = cfg.Text,
+			description = cfg.Description,
 			value = entry.Value,
 			flag = "MonkeyHub_" .. idx,
 			forgetState = true,
@@ -1600,9 +1619,11 @@ local function buildUi()
 		Options[idx] = entry
 		local control = tab:CreateSlider({
 			name = cfg.Text,
+			description = cfg.Description,
 			range = { cfg.Min, cfg.Max },
 			increment = cfg.Increment or 1,
 			value = cfg.Default,
+			suffix = cfg.Suffix,
 			flag = "MonkeyHub_" .. idx,
 			forgetState = true,
 			callback = function(value)
@@ -1622,13 +1643,11 @@ local function buildUi()
 	local function addDropdown(tab, idx, cfg)
 		local names = cfg.Values
 		local defaultName = names[cfg.Default or 1]
-		local entry = {
-			Value = cfg.Map and cfg.Map[defaultName] or defaultName,
-			Raw = defaultName,
-		}
+		local entry = { Value = cfg.Map and cfg.Map[defaultName] or defaultName, Raw = defaultName }
 		Options[idx] = entry
 		local control = tab:CreateDropdown({
 			name = cfg.Text,
+			description = cfg.Description,
 			options = names,
 			value = defaultName,
 			multiSelect = false,
@@ -1649,53 +1668,50 @@ local function buildUi()
 		end
 	end
 
-	window:CreateSection({ name = "Gameplay" })
-
+	window:CreateSection({ name = "GAMEPLAY" })
 	local combatTab = window:CreateTab({ name = "Combat" })
 	combatTab:CreateSection({ name = "Targeting" })
-	addToggle(combatTab, "AutoFight", { Text = "Auto fight", Default = false })
-	addToggle(combatTab, "AimAssist", { Text = "Aim assist (manual fire)", Default = false })
-	addDropdown(combatTab, "AimMode", { Text = "Aim mode", Values = { "Game assist", "Override (risky)" }, Default = 1 })
-	addSlider(combatTab, "AssistCone", { Text = "Assist cone (deg)", Default = 180, Min = 20, Max = 180 })
-	addDropdown(combatTab, "TargetMode", { Text = "Target priority (override)", Values = { "Nearest", "Boss first", "Lowest HP" }, Default = 2 })
-	addToggle(combatTab, "RequireSight", { Text = "Only through clear line of sight", Default = true })
-	combatTab:CreateSection({ name = "Skills" })
-	addToggle(combatTab, "AutoSkills", { Text = "Auto class skills", Default = false })
-	addToggle(combatTab, "AutoUltimate", { Text = "Auto ultimate", Default = false })
-	addToggle(combatTab, "AutoTurret", { Text = "Auto turret", Default = false })
-	combatTab:CreateSection({ name = "Fire rate" })
-	addToggle(combatTab, "RapidFire", { Text = "Rapid fire", Default = false, Risky = true })
-	addSlider(combatTab, "RapidFireMult", { Text = "Fire rate multiplier", Default = 2, Min = 1, Max = 5, Increment = 0.5 })
+	addToggle(combatTab, "AutoFight", { Text = "Auto Attack", Default = false })
+	addToggle(combatTab, "AimAssist", { Text = "Aim Assist", Default = false, Description = "Assist aiming while firing manually." })
+	addDropdown(combatTab, "AimMode", { Text = "Aim Method", Values = { "Game assist", "Override (risky)" }, Default = 1 })
+	addSlider(combatTab, "AssistCone", { Text = "Aim Angle", Default = 180, Min = 20, Max = 180, Suffix = "°" })
+	addDropdown(combatTab, "TargetMode", { Text = "Target Priority", Values = { "Nearest", "Boss first", "Lowest HP" }, Default = 2 })
+	addToggle(combatTab, "RequireSight", { Text = "Check Line of Sight", Default = true })
+	combatTab:CreateSection({ name = "Abilities" })
+	addToggle(combatTab, "AutoSkills", { Text = "Use Class Skills Automatically", Default = false })
+	addToggle(combatTab, "AutoUltimate", { Text = "Use Ultimate Automatically", Default = false })
+	addToggle(combatTab, "AutoTurret", { Text = "Deploy Turret Automatically", Default = false })
+	combatTab:CreateSection({ name = "Weapon" })
+	addToggle(combatTab, "RapidFire", { Text = "Rapid Fire (Advanced)", Default = false })
+	addSlider(combatTab, "RapidFireMult", { Text = "Fire Rate Multiplier", Default = 2, Min = 1, Max = 5, Increment = 0.5, Suffix = "x" })
 
 	local survivalTab = window:CreateTab({ name = "Survival" })
-	survivalTab:CreateSection({ name = "Dodging" })
-	addToggle(survivalTab, "AvoidHazards", { Text = "Dodge boss attacks / acid", Default = false })
-	addToggle(survivalTab, "Kite", { Text = "Kite the swarm (walk)", Default = false })
-	addSlider(survivalTab, "KiteDistance", { Text = "Kite distance", Default = 22, Min = 8, Max = 60 })
+	survivalTab:CreateSection({ name = "Defense" })
+	addToggle(survivalTab, "AvoidHazards", { Text = "Avoid Boss Attacks and Acid", Default = false })
+	addToggle(survivalTab, "Kite", { Text = "Keep Distance from Enemies", Default = false })
+	addSlider(survivalTab, "KiteDistance", { Text = "Enemy Distance", Default = 22, Min = 8, Max = 60, Suffix = " studs" })
 	survivalTab:CreateSection({ name = "Flight" })
-	addToggle(survivalTab, "FlightOrbit", { Text = "Flight orbit farm", Default = false, Risky = true })
-	addToggle(survivalTab, "FlightNoclip", { Text = "Noclip while flying", Default = false, Risky = true })
-	addSlider(survivalTab, "FlightSpeed", { Text = "Flight speed", Default = 40, Min = 16, Max = 64 })
+	addToggle(survivalTab, "FlightOrbit", { Text = "Orbit Flight (Advanced)", Default = false })
+	addToggle(survivalTab, "FlightNoclip", { Text = "Noclip During Flight (Advanced)", Default = false })
+	addSlider(survivalTab, "FlightSpeed", { Text = "Flight Speed", Default = 40, Min = 16, Max = 64 })
 
 	local progressTab = window:CreateTab({ name = "Progress" })
 	progressTab:CreateSection({ name = "Upgrades" })
-	addToggle(progressTab, "AutoUpgrade", { Text = "Auto upgrade (gun, then health)", Default = false })
-	addToggle(progressTab, "AutoSkip", { Text = "Smart wave skip", Default = false })
-	progressTab:CreateSection({ name = "Loot" })
-	addToggle(progressTab, "AutoChest", { Text = "Auto open chests (walks there)", Default = false })
-	addSlider(progressTab, "ChestReserve", { Text = "Keep cash reserve", Default = 0, Min = 0, Max = 2000 })
-	progressTab:CreateSection({ name = "Runs" })
-	addToggle(progressTab, "AutoReplay", { Text = "Auto replay", Default = false })
-	addToggle(progressTab, "ReExecute", { Text = "Re-run hub after replay teleport", Default = true })
+	addToggle(progressTab, "AutoUpgrade", { Text = "Buy Upgrades Automatically", Default = false })
+	addToggle(progressTab, "AutoSkip", { Text = "Skip Waves When Safe", Default = false })
+	progressTab:CreateSection({ name = "Loot and Runs" })
+	addToggle(progressTab, "AutoChest", { Text = "Open Chests Automatically", Default = false })
+	addSlider(progressTab, "ChestReserve", { Text = "Cash Reserve", Default = 0, Min = 0, Max = 2000 })
+	addToggle(progressTab, "AutoReplay", { Text = "Replay Automatically", Default = false })
+	addToggle(progressTab, "ReExecute", { Text = "Run Hub Again After Teleport", Default = true })
 
 	local statusTab = window:CreateTab({ name = "Status" })
-	statusTab:CreateSection({ name = "Live run" })
 	local statusConsole = statusTab:CreateConsole({
-		name = "Run status",
-		text = "Loading...",
-		height = 170,
+		name = "Live Match Status",
+		text = "Waiting for match data...",
+		height = 190,
 		follow = true,
-		maxLines = 24,
+		maxLines = 18,
 	})
 	state.statusLabel = {
 		SetText = function(_, value)
@@ -1703,50 +1719,48 @@ local function buildUi()
 		end,
 	}
 
-	window:CreateSection({ name = "Visuals" })
-
+	window:CreateSection({ name = "VISUALS" })
 	local espTab = window:CreateTab({ name = "ESP" })
-	espTab:CreateSection({ name = "Monkeys" })
-	addToggle(espTab, "MonkeyEsp", { Text = "Monkey ESP", Default = false })
+	espTab:CreateText({
+		name = "Enemy Overlay",
+		text = "Draws clean 2D boxes and optional health and distance details around visible enemies.",
+	})
+	addToggle(espTab, "MonkeyEsp", { Text = "Show Monkey ESP", Default = false })
+	addToggle(espTab, "EspDetails", { Text = "Show Health and Distance", Default = true })
 	addDropdown(espTab, "EspColor", {
-		Text = "Monkey color",
+		Text = "ESP Color",
 		Values = { "Gold", "Red", "Cyan", "Purple", "Green" },
 		Default = 1,
 		Map = ESP_COLORS,
 	})
-	espTab:CreateSection({ name = "Bosses" })
-	addToggle(espTab, "BossEsp", { Text = "Boss ESP", Default = true })
+	addSlider(espTab, "EspDistance", { Text = "Maximum ESP Distance", Default = 600, Min = 150, Max = 800, Increment = 25, Suffix = " studs" })
+	addToggle(espTab, "BossEsp", { Text = "Show Boss ESP", Default = true })
 
 	local worldTab = window:CreateTab({ name = "World" })
-	worldTab:CreateSection({ name = "Lighting" })
-	addToggle(worldTab, "Fullbright", { Text = "Fullbright", Default = false, Callback = Misc.setFullbright })
+	addToggle(worldTab, "Fullbright", { Text = "Fullbright Lighting", Default = false, Callback = Misc.setFullbright })
 
-	window:CreateSection({ name = "Player" })
-
+	window:CreateSection({ name = "PLAYER" })
 	local moveTab = window:CreateTab({ name = "Movement" })
+	moveTab:CreateSection({ name = "Movement" })
+	addToggle(moveTab, "WalkSpeed", { Text = "Custom Walk Speed (Advanced)", Default = false })
+	addSlider(moveTab, "WalkSpeedValue", { Text = "Walk Speed", Default = 22, Min = 16, Max = 40 })
+	addToggle(moveTab, "InfiniteJump", { Text = "Infinite Jump (Advanced)", Default = false })
 	moveTab:CreateSection({ name = "Utility" })
 	addToggle(moveTab, "AntiAfk", { Text = "Anti-AFK", Default = true })
-	moveTab:CreateSection({ name = "Movement" })
-	addToggle(moveTab, "WalkSpeed", { Text = "Walk speed", Default = false, Risky = true })
-	addSlider(moveTab, "WalkSpeedValue", { Text = "Speed", Default = 22, Min = 16, Max = 40 })
-	addToggle(moveTab, "InfiniteJump", { Text = "Infinite jump", Default = false, Risky = true })
 
-	window:CreateSection({ name = "System" })
-
+	window:CreateSection({ name = "SYSTEM" })
 	local settingsTab = window:CreateTab({ name = "Settings" })
-	settingsTab:CreateSection({ name = "Menu" })
 	settingsTab:CreateText({
-		name = "Menu controls",
-		text = "RightCtrl opens and closes the menu. Preferences are saved to the existing MonkeyHub settings file.",
+		name = "Menu Controls",
+		text = "Press RightCtrl to show or hide the menu. Your preferences remain in the existing MonkeyHub settings file.",
 	})
 	settingsTab:CreateButton({
-		name = "Unload",
+		name = "Unload Monkey Hub",
 		callback = function()
 			MonkeyHub.detach()
 		end,
 	})
 
-	-- Preserve the RightCtrl shortcut using the Gen2 hide/show lifecycle method.
 	maid:give(userInputService.InputBegan:Connect(function(input)
 		if input.KeyCode == Enum.KeyCode.RightControl and not userInputService:GetFocusedTextBox() then
 			window:ToggleHide()
@@ -1754,7 +1768,6 @@ local function buildUi()
 	end))
 end
 
--- Aim override is registered once per session; the game keeps it, so it reads the live hub.
 local function hookAim()
 	if MonkeyHub.aimHooked then
 		return
@@ -1767,7 +1780,7 @@ local function hookAim()
 		end
 		return hub.aimPoint()
 	end)
-	-- Same hook Ricochet uses: returning a cone cosine makes the game's AimAssist pick the target.
+
 	Game.gun.AddAutoTarget(function()
 		local hub = shared.MonkeyHub
 		if not hub or not hub.running or not hub.autoCone then
@@ -1777,12 +1790,10 @@ local function hookAim()
 	end)
 end
 
----@return Vector3?
 function MonkeyHub.aimPoint()
 	return state.skillAimPoint or state.targetPoint
 end
 
----@return number?
 function MonkeyHub.autoCone()
 	if not Options or Options.AimMode.Value ~= "Game assist" then
 		return nil
@@ -1801,7 +1812,6 @@ local function waitForClient()
 	end
 end
 
----@param message any
 local function onInitError(message)
 	warn("[MonkeyHub] init failed:", message, debug.traceback())
 	pcall(MonkeyHub.detach)
@@ -1872,7 +1882,6 @@ function MonkeyHub.init()
 	Library:Notify("Monkey Hub loaded. RightCtrl toggles the menu.", 5)
 end
 
--- Singleton: unload any previous copy and keep its one-time aim hook.
 if shared.MonkeyHub then
 	MonkeyHub.aimHooked = shared.MonkeyHub.aimHooked
 	pcall(shared.MonkeyHub.detach)
