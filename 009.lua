@@ -7,6 +7,9 @@ loadstring("getfenv().PP_SCRAMBLE_NUM = function(...) return ... end")()
 loadstring("getfenv().PP_SCRAMBLE_STR = function(...) return ... end")()
 loadstring("getfenv().PP_SCRAMBLE_RE_NUM = function(...) return ... end")()
 
+local SCRIPT_TITLE = "[🎃] Survive a Million Monkeys"
+local SCRIPT_AUTHOR = "By Ovei"
+
 local MonkeyHub = {}
 
 local Maid = {}
@@ -39,9 +42,6 @@ function Maid:clean()
 		end
 	end
 end
-
-local LOBBY_PLACE_ID = 99409088950210
-local MATCH_PLACE_ID = 115317125060158
 
 local CONFIG = {
 	RAYFIELD_URL = "https://sirius.menu/gen2",
@@ -91,10 +91,8 @@ local state = {
 	originalFireRate = false,
 	zones = {},
 	skillLast = {},
-	bossEvents = {},
 	hazardSequence = 0,
 	lastFire = 0,
-	lastUpgrade = 0,
 	lastSkipScan = 0,
 	lastTurret = 0,
 	lastUlt = 0,
@@ -184,7 +182,6 @@ local function loadGame()
 	Game.patterns = safeRequire(waitPath(replicatedStorage, "Shared.Content.AoePatterns"))
 	Game.progression = safeRequire(waitPath(replicatedStorage, "Shared.Content.Progression"))
 	Game.abilities = requireFolder(waitPath(replicatedStorage, "Shared.Content.Abilities"))
-	Game.classes = requireFolder(waitPath(replicatedStorage, "Shared.Content.Classes"))
 	Game.bossDefinitions = requireFolder(waitPath(replicatedStorage, "Shared.Bosses.Definitions"))
 	Game.waves = waitPath(replicatedStorage, "Shared.Waves")
 	Game.bossesLive = waitPath(replicatedStorage, "Shared.Bosses.Live")
@@ -300,11 +297,6 @@ local function hookHazards()
 			end
 		end
 		local attack = definition and definition.Attacks and definition.Attacks[attackName]
-		if event == "Windup" then
-			state.bossEvents[id] = { untilTime = os.clock() + 5, attack = attackName }
-		elseif event == "Recovery" or event == "Cancel" or event == "Dead" then
-			state.bossEvents[id] = nil
-		end
 		if type(data) ~= "table" then
 			return
 		end
@@ -1593,11 +1585,11 @@ local function buildUi()
 	Toggles, Options = {}, {}
 
 	local window = Rayfield:CreateWindow({
-		name = "Monkey Hub",
-		subtitle = "Survive a Million Monkeys",
+		name = SCRIPT_TITLE,
 		theme = "cobalt",
 		sidebarLayout = true,
-		showName = "Monkey Hub",
+		profile = SCRIPT_AUTHOR,
+		showName = SCRIPT_TITLE,
 		configuration = {
 			autoSave = false,
 			autoLoad = false,
@@ -1609,7 +1601,7 @@ local function buildUi()
 	local windowUnloaded = false
 	Library = {
 		Notify = function(_, message, duration)
-			window:Notify({ title = "Monkey Hub", content = tostring(message), duration = duration or 4 })
+			window:Notify({ title = SCRIPT_TITLE, content = tostring(message), duration = duration or 4 })
 		end,
 		Unload = function()
 			if not windowUnloaded then
@@ -1649,7 +1641,6 @@ local function buildUi()
 		Toggles[idx] = entry
 		local control = tab:CreateToggle({
 			name = cfg.Text,
-			description = cfg.Description,
 			value = entry.Value,
 			flag = "MonkeyHub_" .. idx,
 			forgetState = true,
@@ -1671,7 +1662,6 @@ local function buildUi()
 		Options[idx] = entry
 		local control = tab:CreateSlider({
 			name = cfg.Text,
-			description = cfg.Description,
 			range = { cfg.Min, cfg.Max },
 			increment = cfg.Increment or 1,
 			value = cfg.Default,
@@ -1699,7 +1689,6 @@ local function buildUi()
 		Options[idx] = entry
 		local control = tab:CreateDropdown({
 			name = cfg.Text,
-			description = cfg.Description,
 			options = names,
 			value = defaultName,
 			multiSelect = false,
@@ -1723,7 +1712,7 @@ local function buildUi()
 	local combatTab = window:CreateTab({ name = "Combat" })
 	combatTab:CreateSection({ name = "Targeting" })
 	addToggle(combatTab, "AutoFight", { Text = "Auto Attack", Default = false })
-	addToggle(combatTab, "AimAssist", { Text = "Aim Assist", Default = false, Description = "Assist aiming while firing manually." })
+	addToggle(combatTab, "AimAssist", { Text = "Aim Assist", Default = false })
 	addDropdown(combatTab, "AimMode", { Text = "Aim Method", Values = { "Game assist", "Override (risky)" }, Default = 1 })
 	addSlider(combatTab, "AssistCone", { Text = "Aim Angle", Default = 180, Min = 20, Max = 180, Suffix = "°" })
 	addDropdown(combatTab, "TargetMode", { Text = "Target Priority", Values = { "Nearest", "Boss first", "Lowest HP" }, Default = 2 })
@@ -1733,18 +1722,24 @@ local function buildUi()
 	addToggle(combatTab, "AutoUltimate", { Text = "Use Ultimate Automatically", Default = false })
 	addToggle(combatTab, "AutoTurret", { Text = "Deploy Turret Automatically", Default = false })
 	combatTab:CreateSection({ name = "Weapon" })
-	addToggle(combatTab, "RapidFire", { Text = "Rapid Fire (Patched)", Default = false, Description = "Applies the patched fire-rate adjustment." })
+	addToggle(combatTab, "RapidFire", { Text = "Rapid Fire (Patched)", Default = false })
 	addSlider(combatTab, "RapidFireMult", { Text = "Fire Rate Multiplier", Default = 2, Min = 1, Max = 5, Increment = 0.5, Suffix = "x" })
 
 	local survivalTab = window:CreateTab({ name = "Survival" })
 	survivalTab:CreateSection({ name = "Defense" })
-	addToggle(survivalTab, "AvoidHazards", { Text = "Avoid Boss Attacks and Acid", Default = false, Description = "Finds a clear route around active boss telegraphs and acid zones." })
-	addToggle(survivalTab, "Kite", { Text = "Keep Safe Distance from Enemies", Default = false, Description = "Moves away from nearby enemy groups and gives boss threats higher priority." })
+	addToggle(survivalTab, "AvoidHazards", { Text = "Avoid Boss Attacks and Acid", Default = false })
+	addToggle(survivalTab, "Kite", { Text = "Keep Safe Distance from Enemies", Default = false })
 	addSlider(survivalTab, "KiteDistance", { Text = "Enemy Distance", Default = 22, Min = 8, Max = 60, Suffix = " studs" })
 	survivalTab:CreateSection({ name = "Flight" })
 	addToggle(survivalTab, "FlightOrbit", { Text = "Orbit Flight (Advanced)", Default = false })
 	addToggle(survivalTab, "FlightNoclip", { Text = "Noclip During Flight (Advanced)", Default = false })
 	addSlider(survivalTab, "FlightSpeed", { Text = "Flight Speed", Default = 40, Min = 16, Max = 64 })
+	survivalTab:CreateSection({ name = "Movement" })
+	addToggle(survivalTab, "WalkSpeed", { Text = "Custom Walk Speed", Default = false })
+	addSlider(survivalTab, "WalkSpeedValue", { Text = "Walk Speed", Default = 22, Min = 16, Max = 40 })
+	addToggle(survivalTab, "InfiniteJump", { Text = "Infinite Jump", Default = false })
+	survivalTab:CreateSection({ name = "Utility" })
+	addToggle(survivalTab, "AntiAfk", { Text = "Anti-AFK", Default = true })
 
 	local progressTab = window:CreateTab({ name = "Progress" })
 	progressTab:CreateSection({ name = "Upgrades" })
@@ -1755,6 +1750,21 @@ local function buildUi()
 	addSlider(progressTab, "ChestReserve", { Text = "Cash Reserve", Default = 0, Min = 0, Max = 2000 })
 	addToggle(progressTab, "AutoReplay", { Text = "Replay Automatically", Default = false })
 	addToggle(progressTab, "ReExecute", { Text = "Run Hub Again After Teleport", Default = true })
+
+	local visualsTab = window:CreateTab({ name = "Visuals" })
+	visualsTab:CreateSection({ name = "Enemy ESP" })
+	addToggle(visualsTab, "MonkeyEsp", { Text = "Show Monkey ESP", Default = false })
+	addToggle(visualsTab, "EspDetails", { Text = "Show Health and Distance", Default = true })
+	addDropdown(visualsTab, "EspColor", {
+		Text = "ESP Color",
+		Values = { "Gold", "Red", "Cyan", "Purple", "Green" },
+		Default = 1,
+		Map = ESP_COLORS,
+	})
+	addSlider(visualsTab, "EspDistance", { Text = "Maximum ESP Distance", Default = 600, Min = 150, Max = 800, Increment = 25, Suffix = " studs" })
+	addToggle(visualsTab, "BossEsp", { Text = "Show Boss ESP", Default = true })
+	visualsTab:CreateSection({ name = "Environment" })
+	addToggle(visualsTab, "Fullbright", { Text = "Fullbright Lighting", Default = false, Callback = Misc.setFullbright })
 
 	local statusTab = window:CreateTab({ name = "Status" })
 	local statusConsole = statusTab:CreateConsole({
@@ -1769,41 +1779,9 @@ local function buildUi()
 			statusConsole:Append(tostring(value):gsub("\r?\n", " | "))
 		end,
 	}
-
-	local espTab = window:CreateTab({ name = "ESP" })
-	espTab:CreateText({
-		name = "Enemy Overlay",
-		text = "Draws clean 2D boxes and optional health and distance details around visible enemies.",
-	})
-	addToggle(espTab, "MonkeyEsp", { Text = "Show Monkey ESP", Default = false })
-	addToggle(espTab, "EspDetails", { Text = "Show Health and Distance", Default = true })
-	addDropdown(espTab, "EspColor", {
-		Text = "ESP Color",
-		Values = { "Gold", "Red", "Cyan", "Purple", "Green" },
-		Default = 1,
-		Map = ESP_COLORS,
-	})
-	addSlider(espTab, "EspDistance", { Text = "Maximum ESP Distance", Default = 600, Min = 150, Max = 800, Increment = 25, Suffix = " studs" })
-	addToggle(espTab, "BossEsp", { Text = "Show Boss ESP", Default = true })
-
-	local worldTab = window:CreateTab({ name = "World" })
-	addToggle(worldTab, "Fullbright", { Text = "Fullbright Lighting", Default = false, Callback = Misc.setFullbright })
-
-	local moveTab = window:CreateTab({ name = "Movement" })
-	moveTab:CreateSection({ name = "Movement" })
-	addToggle(moveTab, "WalkSpeed", { Text = "Custom Walk Speed (Advanced)", Default = false })
-	addSlider(moveTab, "WalkSpeedValue", { Text = "Walk Speed", Default = 22, Min = 16, Max = 40 })
-	addToggle(moveTab, "InfiniteJump", { Text = "Infinite Jump (Advanced)", Default = false })
-	moveTab:CreateSection({ name = "Utility" })
-	addToggle(moveTab, "AntiAfk", { Text = "Anti-AFK", Default = true })
-
-	local settingsTab = window:CreateTab({ name = "Settings" })
-	settingsTab:CreateText({
-		name = "Menu Controls",
-		text = "Press RightCtrl to show or hide the menu. Your preferences remain in the existing MonkeyHub settings file.",
-	})
-	settingsTab:CreateButton({
-		name = "Unload Monkey Hub",
+	statusTab:CreateSection({ name = "Session" })
+	statusTab:CreateButton({
+		name = "Unload Script",
 		callback = function()
 			MonkeyHub.detach()
 		end,
@@ -1892,7 +1870,6 @@ function MonkeyHub.detach()
 end
 
 function MonkeyHub.init()
-	assert(game.PlaceId == MATCH_PLACE_ID, game.PlaceId == LOBBY_PLACE_ID and "start a run first; the hub runs inside a match" or "wrong game")
 	if not game:IsLoaded() then
 		game.Loaded:Wait()
 	end
@@ -1923,11 +1900,11 @@ function MonkeyHub.init()
 			warn("[MonkeyHub]", err)
 		end
 		if state.errors >= 10 then
-			Library:Notify("Monkey Hub stopped after repeated errors: " .. tostring(err), 8)
+			Library:Notify(SCRIPT_TITLE .. " stopped after repeated errors: " .. tostring(err), 8)
 			MonkeyHub.detach()
 		end
 	end))
-	Library:Notify("Monkey Hub loaded. RightCtrl toggles the menu.", 5)
+	Library:Notify(SCRIPT_TITLE .. " loaded. RightCtrl toggles the menu.", 5)
 end
 
 if shared.MonkeyHub then
