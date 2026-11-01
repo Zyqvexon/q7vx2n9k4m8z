@@ -43,11 +43,28 @@ end
 function runtime:Destroy()
     if not self.Alive then return end
     self.Alive = false
-    for _, connection in ipairs(self.Connections) do pcall(function() connection:Disconnect() end) end
-    for index = #self.Cleanups, 1, -1 do pcall(self.Cleanups[index]) end
-    for thread in pairs(self.Threads) do if thread ~= coroutine.running() then pcall(task.cancel, thread) end end
-    table.clear(self.Connections)
+
+    -- Stop event callbacks and worker loops before restoring game/UI state.
+    local currentThread = coroutine.running()
+    local processed = 0
+    for _, connection in ipairs(self.Connections) do
+        pcall(function() connection:Disconnect() end)
+        processed += 1
+        if processed % 150 == 0 then task.wait() end
+    end
+
+    for thread in pairs(self.Threads) do
+        if thread ~= currentThread then pcall(task.cancel, thread) end
+    end
     table.clear(self.Threads)
+
+    -- Yield periodically so large visual/property restorations do not freeze a frame.
+    for index = #self.Cleanups, 1, -1 do
+        pcall(self.Cleanups[index])
+        if index % 4 == 0 then task.wait() end
+    end
+
+    table.clear(self.Connections)
     table.clear(self.Cleanups)
     if _G.TapSimulatorRebornRuntime == self then _G.TapSimulatorRebornRuntime = nil end
 end
@@ -67,7 +84,8 @@ local window = Rayfield:CreateWindow({
         customFolder = "TapSimulatorReborn_" .. tostring(services.Players.LocalPlayer.UserId)
     }
 })
-pcall(function() window:ChangeTheme({LiveAnimation = false}) end)
+-- Keep the Ember theme, but remove continuously animated gradients and control glow.
+pcall(function() window:ChangeTheme({LiveAnimation = false, AccentGlow = 1}) end)
 runtime:AddCleanup(function()
     if not window.unloaded then window:Unload() end
 end)
@@ -232,6 +250,13 @@ function utils.refreshStatusDisplay(key)
     local handle = utils.statusDisplays[key]
     if not handle then return end
 
+    -- Do not keep reflowing Rayfield text while its window is collapsed/hidden.
+    -- The latest state is retained and flushed when the window is shown again.
+    if window.unloaded or window.hidden == true then
+        utils.pendingStats[key] = true
+        return
+    end
+
     local state = tostring(utils.status[key] or "Off"):upper():gsub("[%c]", " ")
     local detail = utils.statusDetail[key]
     local count = utils.runCounts[key] or 0
@@ -260,7 +285,7 @@ function utils.createStatusRow(tab, text, key, initialStatus)
 end
 
 function utils.appendActivity(key, value)
-    if not runtime.Alive or not utils.activityConsole then return end
+    if not runtime.Alive or not utils.activityConsole or window.unloaded or window.hidden == true then return end
     local now = os.clock()
     local last = utils.activityTimes[key] or 0
     if now - last < 1.1 then return end
@@ -1517,9 +1542,12 @@ function utils.hideClicks(enabled)
             if hook.Module[hook.Name] == hook.Replacement then hook.Module[hook.Name] = hook.Original end
         end
         table.clear(state.Hooks)
+        local restored = 0
         for instance, saved in pairs(state.Saved) do
             if saved.Connection then saved.Connection:Disconnect() end
             if instance.Parent then instance[saved.Property] = saved.Value end
+            restored += 1
+            if restored % 120 == 0 then task.wait() end
         end
         table.clear(state.Saved)
         if utils.modules.tapEffects then
@@ -1608,8 +1636,13 @@ runtime:AddCleanup(function()
     utils.performance.Enabled = false
     if utils.performance.Connection then utils.performance.Connection:Disconnect() end
     if utils.performance.LightingConnection then utils.performance.LightingConnection:Disconnect() end
+    local restored = 0
     for instance, properties in pairs(utils.performance.Saved) do
-        for property, saved in pairs(properties) do pcall(function() instance[property] = saved.Value end) end
+        for property, saved in pairs(properties) do
+            pcall(function() instance[property] = saved.Value end)
+            restored += 1
+            if restored % 150 == 0 then task.wait() end
+        end
     end
     table.clear(utils.performance.Saved)
 end)
@@ -1946,12 +1979,28 @@ runtime:Spawn(function()
     end
 end)
 runtime:Spawn(function()
+    local wasHidden = window.hidden == true
     while runtime.Alive do
-        for key in pairs(utils.pendingStats) do
-            utils.pendingStats[key] = nil
-            utils.refreshStatusDisplay(key)
+        local hidden = window.hidden == true
+
+        if not hidden and not window.unloaded then
+            if wasHidden then
+                -- Refresh every row once after returning from the collapsed state.
+                for key in pairs(utils.statusDisplays) do
+                    utils.renderedStatus[key] = nil
+                    utils.refreshStatusDisplay(key)
+                end
+                table.clear(utils.pendingStats)
+            else
+                for key in pairs(utils.pendingStats) do
+                    utils.pendingStats[key] = nil
+                    utils.refreshStatusDisplay(key)
+                end
+            end
         end
-        task.wait(5)
+
+        wasHidden = hidden
+        task.wait(hidden and 1 or 5)
     end
 end)
 return utils, window
