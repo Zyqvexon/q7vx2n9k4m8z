@@ -237,8 +237,8 @@ function utils.refreshStatusDisplay(key)
     local count = utils.runCounts[key] or 0
     local line = state
     if detail and detail ~= "" then line = line .. " - " .. tostring(detail) end
-    line = line .. " | " .. (count == 1 and "1 run" or (tostring(count) .. " runs"))
-    if #line > 104 then line = line:sub(1, 101) .. "..." end
+    line = line .. "  |  " .. (count == 1 and "1 run" or (tostring(count) .. " runs"))
+    if #line > 64 then line = line:sub(1, 61) .. "..." end
     if utils.renderedStatus[key] == line then return end
 
     utils.renderedStatus[key] = line
@@ -253,8 +253,7 @@ function utils.createStatusRow(tab, text, key, initialStatus)
     local controlColumn = row:CreateGroup({direction = "column"})
     local statusColumn = row:CreateGroup({direction = "column"})
     utils.statusDisplays[key] = statusColumn:CreateText({
-        name = "STATUS",
-        text = tostring(utils.status[key]):upper() .. " | " .. tostring(utils.runCounts[key]) .. " runs"
+        text = tostring(utils.status[key]):upper() .. "  |  " .. tostring(utils.runCounts[key]) .. " runs"
     })
     utils.refreshStatusDisplay(key)
     return controlColumn
@@ -1674,11 +1673,11 @@ tabs.main.rebirthDropdown = tabs.main:CreateDropdown({name = "Rebirth Amount", o
 })
 utils.job(tabs.main, "Auto Rebirth", "Rebirth", 0.5, utils.rebirth)
 utils.section(tabs.main, "Progression")
-utils.job(tabs.main, "Auto Upgrade Skills", "Skills", 0.5, utils.skills)
-utils.job(tabs.main, "Auto Unlock Islands", "Islands", 5, utils.islands)
-utils.job(tabs.main, "Auto Collect Rewards", "Rewards", 20, utils.rewards)
-utils.job(tabs.main, "Auto Dismiss Reward Popups", "RewardPopup", 0.3, utils.closeRewards)
-utils.job(tabs.main, "Auto Collect Chests", "Chests", 30, utils.chests)
+utils.job(tabs.main, "Upgrade Skills", "Skills", 0.5, utils.skills)
+utils.job(tabs.main, "Unlock Islands", "Islands", 5, utils.islands)
+utils.job(tabs.main, "Collect Rewards", "Rewards", 20, utils.rewards)
+utils.job(tabs.main, "Dismiss Popups", "RewardPopup", 0.3, utils.closeRewards)
+utils.job(tabs.main, "Collect Chests", "Chests", 30, utils.chests)
 utils.section(tabs.main, "Optimization")
 utils.action(tabs.main, "Optimize Visuals", "Performance", utils.antiLag)
 utils.section(tabs.hatching, "Egg Hatching")
@@ -1704,7 +1703,7 @@ tabs.hatching:CreateDropdown({name = "Hatch Quantity", options = {"1x", "3x", "8
 })
 utils.settings.farm.HatchCount = 8
 utils.job(tabs.hatching, "Auto Hatch", "Hatch", 0.2, utils.hatchEgg)
-utils.toggle(tabs.hatching, "Skip Hatch Animations", "HideHatch", "Visual.HideHatch", function(enabled)
+utils.toggle(tabs.hatching, "Skip Animations", "HideHatch", "Visual.HideHatch", function(enabled)
     utils.hideHatch(enabled)
 end)
 utils.section(tabs.hatching, "Auto-Delete Rules")
@@ -1728,9 +1727,9 @@ tabs.hatching.rarityDropdown = tabs.hatching:CreateDropdown({name = "Rarities to
 })
 utils.section(tabs.pets, "Team Setup")
 utils.dropdown(tabs.pets, "Team Focus", utils.settings.pets, "Team", {"Clicks", "Gems", "Luck"}, "Pets.Team")
-utils.job(tabs.pets, "Auto Equip Best Team", "Team", 10, utils.equip)
+utils.job(tabs.pets, "Equip Best Team", "Team", 10, utils.equip)
 utils.action(tabs.pets, "Equip Best Team", "EquipTeam", utils.equip)
-utils.job(tabs.pets, "Auto Feed Pets", "Treats", 10, utils.feed)
+utils.job(tabs.pets, "Feed Pets", "Treats", 10, utils.feed)
 utils.section(tabs.pets, "Pet Cleanup")
 utils.rarities = {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}
 local deleteRarities = table.clone(utils.rarities)
@@ -1743,7 +1742,7 @@ tabs.pets.deleteNames = tabs.pets:CreateDropdown({name = "Pets to Delete", optio
         for _, name in ipairs(selectedList(values)) do if type(name) == "string" then utils.settings.pets.Names[name] = true end end
     end
 })
-utils.job(tabs.pets, "Auto-Delete Pets", "Cleanup", 15, utils.sellPets)
+utils.job(tabs.pets, "Delete Pets", "Cleanup", 15, utils.sellPets)
 tabs.crafting.petDropdowns = {}
 function utils.petNames(tier)
     local names = {}
@@ -1770,9 +1769,9 @@ for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Go
             callback = function(value) value = selectedOne(value); utils.settings.pets[title .. "Count"] = amounts[value] or #choices end})
     end
     tabs.crafting.petDropdowns[tier] = utils.multi(tabs.crafting, "Pets for " .. title, utils.settings.pets, title .. "Pets", utils.petNames(tier), "Craft." .. title .. "Pets")
-    utils.job(tabs.crafting, "Auto Craft " .. title, machine, 8, function() return utils.craft(machine) end)
+    utils.job(tabs.crafting, "Craft " .. title, machine, 8, function() return utils.craft(machine) end)
 end
-utils.job(tabs.crafting, "Auto Collect Stars", "Stars", 5, utils.collectStars)
+utils.job(tabs.crafting, "Collect Stars", "Stars", 5, utils.collectStars)
 utils.section(tabs.enchanting, "Pet Enchanting")
 utils.multi(tabs.enchanting, "Enchantments to Apply", utils.settings.enchant, "Traits", utils.keys(utils.modules.enchants.Enchants), "Enchant.Traits")
 function utils.enchantPets()
@@ -1823,7 +1822,7 @@ end
 
 tabs.enchanting.petDropdown = tabs.enchanting:CreateDropdown({name = "Pets to Enchant", options = utils.enchantPets(), value = {"Equipped Pets"}, multiSelect = true, flag = "Enchant.Pets",
     callback = utils.selectEnchantPets})
-utils.job(tabs.enchanting, "Auto Enchant Pets", "Enchant", 2, utils.enchant)
+utils.job(tabs.enchanting, "Enchant Pets", "Enchant", 2, utils.enchant)
 utils.section(tabs.teleport, "Island Travel")
 utils.settings.destination = {Island = "Spawn", OnJoin = false}
 utils.islandNames = {"Spawn"}
@@ -1840,17 +1839,17 @@ utils.toggle(tabs.teleport, "Travel on Join", "TravelOnJoin", "Travel.OnJoin", f
     if enabled then runtime:Spawn(function() task.wait(1); if runtime.Alive and utils.settings.destination.OnJoin then pcall(utils.teleport) end end) end
 end)
 utils.section(tabs.misc, "Mini-Games")
-utils.job(tabs.misc, "Auto Play Colosseum", "Arena", 20, utils.colosseum, function()
+utils.job(tabs.misc, "Play Colosseum", "Arena", 20, utils.colosseum, function()
     if utils.arena.Active then pcall(utils.remote, "Colosseum", "EndWaveDefense") end
     utils.arena.Active = false
 end)
-utils.job(tabs.misc, "Auto Play Memory Match", "Memory", 20, utils.memoryGame)
+utils.job(tabs.misc, "Memory Match", "Memory", 20, utils.memoryGame)
 utils.job(tabs.misc, "Auto Dig", "Dig", 20, utils.digGame)
 utils.section(tabs.misc, "Potions")
 utils.multi(tabs.misc, "Potion Types", utils.settings.boosts, "Types", {"Coins", "Gems", "Luck", "OctoHatch", "GoldenHatch", "EnchantAnimSpeed"}, "Boosts.Types")
-utils.job(tabs.misc, "Auto Use Boost Potions", "Boosts", 15, utils.potions)
+utils.job(tabs.misc, "Use Boosts", "Boosts", 15, utils.potions)
 utils.dropdown(tabs.misc, "Potion Selection", utils.settings.boosts, "Brew", utils.modules.brew.Potions, "Boosts.Brew")
-utils.job(tabs.misc, "Auto Craft Potions", "Potions", 20, utils.potionMachine)
+utils.job(tabs.misc, "Craft Potions", "Potions", 20, utils.potionMachine)
 utils.dropdown(tabs.misc, "Potion Craft Quantity", utils.settings.boosts, "Bundle", {"1", "3", "10"}, "Boosts.Bundle")
 utils.action(tabs.misc, "Buy Potions", "BuyPotions", function()
     return utils.trip("Potions", workspace.Map1:FindFirstChild("PotionMachine"), function()
@@ -1860,12 +1859,12 @@ utils.action(tabs.misc, "Buy Potions", "BuyPotions", function()
 end)
 utils.section(tabs.misc, "Boosts")
 utils.dropdown(tabs.misc, "Shrine Blessing", utils.settings.boosts, "Shrine", {"Luck", "Golden", "AutoClicker"}, "Boosts.Shrine")
-utils.job(tabs.misc, "Auto Claim Shrine Blessing", "Shrine", 30, utils.shrine)
-utils.job(tabs.misc, "Auto Activate Totems", "Totems", 30, utils.totems)
+utils.job(tabs.misc, "Claim Shrine", "Shrine", 30, utils.shrine)
+utils.job(tabs.misc, "Activate Totems", "Totems", 30, utils.totems)
 utils.relicNames = {"Automatic"}
 for _, name in ipairs(utils.modules.relics.Order) do table.insert(utils.relicNames, name) end
 utils.dropdown(tabs.misc, "Relic Selection", utils.settings.boosts, "Relic", utils.relicNames, "Boosts.Relic")
-utils.job(tabs.misc, "Auto Claim Relics", "Relic", 20, utils.relic)
+utils.job(tabs.misc, "Claim Relics", "Relic", 20, utils.relic)
 utils.section(tabs.main, "Hub Controls")
 utils.action(tabs.main, "Stop All Tasks", "SessionStop", function()
     utils.stop()
