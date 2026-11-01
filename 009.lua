@@ -1720,7 +1720,6 @@ local function buildUi()
 		end
 	end
 
-	window:CreateSection({ name = "GAMEPLAY" })
 	local combatTab = window:CreateTab({ name = "Combat" })
 	combatTab:CreateSection({ name = "Targeting" })
 	addToggle(combatTab, "AutoFight", { Text = "Auto Attack", Default = false })
@@ -1771,7 +1770,6 @@ local function buildUi()
 		end,
 	}
 
-	window:CreateSection({ name = "VISUALS" })
 	local espTab = window:CreateTab({ name = "ESP" })
 	espTab:CreateText({
 		name = "Enemy Overlay",
@@ -1791,7 +1789,6 @@ local function buildUi()
 	local worldTab = window:CreateTab({ name = "World" })
 	addToggle(worldTab, "Fullbright", { Text = "Fullbright Lighting", Default = false, Callback = Misc.setFullbright })
 
-	window:CreateSection({ name = "PLAYER" })
 	local moveTab = window:CreateTab({ name = "Movement" })
 	moveTab:CreateSection({ name = "Movement" })
 	addToggle(moveTab, "WalkSpeed", { Text = "Custom Walk Speed (Advanced)", Default = false })
@@ -1800,7 +1797,6 @@ local function buildUi()
 	moveTab:CreateSection({ name = "Utility" })
 	addToggle(moveTab, "AntiAfk", { Text = "Anti-AFK", Default = true })
 
-	window:CreateSection({ name = "SYSTEM" })
 	local settingsTab = window:CreateTab({ name = "Settings" })
 	settingsTab:CreateText({
 		name = "Menu Controls",
