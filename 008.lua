@@ -3,8 +3,6 @@ local services = {
     Players = game:GetService("Players"),
     ReplicatedStorage = game:GetService("ReplicatedStorage"),
     Workspace = workspace,
-    RunService = game:GetService("RunService"),
-    UserInputService = game:GetService("UserInputService"),
     VirtualUser = game:GetService("VirtualUser"),
     HttpService = game:GetService("HttpService"),
     CollectionService = game:GetService("CollectionService"),
@@ -70,6 +68,13 @@ local window = Rayfield:CreateWindow({
     }
 })
 pcall(function() window:ChangeTheme({LiveAnimation = false}) end)
+local hatchStatusTag
+pcall(function()
+    hatchStatusTag = window:CreateTag({
+        text = "HATCH: IDLE",
+        color = Color3.fromRGB(150, 155, 165)
+    })
+end)
 runtime:AddCleanup(function()
     if not window.unloaded then window:Unload() end
 end)
@@ -88,7 +93,7 @@ local utils = {
     actionBusy = {},
     next = {},
     travel = {Owner = nil, Origin = nil},
-    hatch = {Sequence = 0, Pending = {}, Count = 0, Errors = 0, NextAt = 0},
+    hatch = {Sequence = 0, Pending = {}, Count = 0, Errors = 0, NextAt = 0, Status = "IDLE", NotifiedFull = false},
     arena = {Active = false, Opponents = {}, Wave = 0},
     memory = {Id = nil, Known = {}},
     originals = {},
@@ -189,7 +194,7 @@ utils.activityConsole = tabs.main:CreateConsole({
     text = "Waiting for activity...",
     height = 138,
     follow = true,
-    maxLines = 40
+    maxLines = 24
 })
 
 local activityNames = {
@@ -235,12 +240,82 @@ function utils.message(key, value)
     utils.status[key] = status
     if not runtime.Alive or not utils.activityConsole then return end
     local last = utils.activityTimes[key] or 0
-    if now - last < 0.75 then return end
-    if previous == status and now - last < 2 then return end
+    if now - last < 1.0 then return end
+    if previous == status and now - last < 4 then return end
     utils.activityTimes[key] = now
     pcall(function()
         utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(activityNames[key] or key) .. ": " .. status)
     end)
+end
+
+function utils.isInventoryFullMessage(value)
+    local lower = tostring(value or ""):lower()
+    return lower:find("inventory full", 1, true)
+        or lower:find("storage full", 1, true)
+        or lower:find("inventory_full", 1, true)
+        or lower:find("storage_full", 1, true)
+        or lower:find("capacity", 1, true)
+        or lower:find("storage limit", 1, true)
+        or lower:find("inventory_limit", 1, true)
+        or lower:find("storage_limit", 1, true)
+end
+
+function utils.setHatchStatus(value)
+    local raw = tostring(value or "Idle")
+    local lower = raw:lower()
+    local label = "READY"
+    local color = Color3.fromRGB(90, 190, 125)
+    local details = raw
+
+    if utils.isInventoryFullMessage(raw) then
+        label = "INVENTORY FULL"
+        color = Color3.fromRGB(245, 150, 70)
+        details = "Inventory full - clear pet slots to resume hatching"
+    elseif lower:find("not enough coins", 1, true) then
+        label = "LOW COINS"
+        color = Color3.fromRGB(235, 190, 75)
+    elseif lower:find("egg unavailable", 1, true) then
+        label = "EGG UNAVAILABLE"
+        color = Color3.fromRGB(235, 165, 75)
+    elseif lower:find("unlock ", 1, true) then
+        label = "LOCKED"
+        color = Color3.fromRGB(235, 165, 75)
+    elseif lower:find("opening ", 1, true) or lower:find("awaiting server result", 1, true) then
+        label = "HATCHING"
+        color = Color3.fromRGB(90, 190, 125)
+    elseif lower:find("hatched ", 1, true) then
+        label = "HATCHED"
+        color = Color3.fromRGB(90, 190, 125)
+    elseif lower:find("cooldown", 1, true) or lower:find("animation playing", 1, true)
+        or lower:find("character busy", 1, true) or lower:find("waiting", 1, true) then
+        label = "WAITING"
+        color = Color3.fromRGB(225, 185, 85)
+    elseif lower == "off" or lower:find("stopped", 1, true) then
+        label = "OFF"
+        color = Color3.fromRGB(150, 155, 165)
+    elseif lower:find("failed", 1, true) or lower:find("rejected", 1, true)
+        or lower:find("timeout", 1, true) then
+        label = "ERROR"
+        color = Color3.fromRGB(225, 90, 90)
+    end
+
+    local changed = utils.hatch.Status ~= label
+    utils.hatch.Status = label
+    if changed then
+        pcall(function()
+            hatchStatusTag:Set({text = "HATCH: " .. label, color = color})
+        end)
+        utils.message("Hatch", details)
+    end
+
+    if label == "INVENTORY FULL" then
+        if changed and not utils.hatch.NotifiedFull then
+            notify("Auto Hatch", "Your pet inventory is full. Clear some pet slots and Auto Hatch will retry.", 6)
+            utils.hatch.NotifiedFull = true
+        end
+    else
+        utils.hatch.NotifiedFull = false
+    end
 end
 
 function utils.registerStat(tab, text, key)
@@ -281,6 +356,7 @@ function utils.job(tab, text, key, interval, callback, cleanup)
             job.Enabled, job.Next = enabled, 0
             if not enabled and cleanup then pcall(cleanup) end
             utils.message(key, enabled and "Waiting" or "Off")
+            if key == "Hatch" then utils.setHatchStatus(enabled and "Waiting for egg" or "Off") end
         end
     })
     utils.registerStat(tab, text, key)
@@ -526,32 +602,60 @@ function utils.hatchEgg()
     local generation = job.Generation
     local function active() return runtime.Alive and job.Enabled and job.Generation == generation end
     if not active() then return "Stopped" end
-    if utils.travel.Owner then return "Character busy" end
-    local display = utils.modules.eggController:GetForcedHatchDebugState()
-    if display.Queue > 0 or display.Worker or display.Busy then return "Hatch animation playing" end
-    if os.clock() < utils.hatch.NextAt then return string.format("Hatch cooldown: %.1fs", utils.hatch.NextAt - os.clock()) end
-    for sequence, pending in pairs(utils.hatch.Pending) do
-        if os.clock() - pending.At > 10 then utils.hatch.Pending[sequence] = nil; utils.hatch.Errors += 1 end
+    if os.clock() < utils.hatch.NextAt then return "Hatch cooldown" end
+    if utils.travel.Owner then
+        utils.hatch.NextAt = os.clock() + 0.5
+        return "Character busy"
     end
-    if utils.count(utils.hatch.Pending) >= 1 then return "Hatch request sent - awaiting server result" end
+    local display = utils.modules.eggController:GetForcedHatchDebugState()
+    if display.Queue > 0 or display.Worker or display.Busy then
+        utils.hatch.NextAt = os.clock() + 0.5
+        return "Hatch animation playing"
+    end
+    for sequence, pending in pairs(utils.hatch.Pending) do
+        if os.clock() - pending.At > 10 then
+            utils.hatch.Pending[sequence] = nil
+            utils.hatch.Errors += 1
+            utils.setHatchStatus("Hatch request timeout")
+        end
+    end
+    if utils.count(utils.hatch.Pending) >= 1 then
+        utils.hatch.NextAt = os.clock() + 2
+        return "Hatch request sent - awaiting server result"
+    end
     local data = utils.save()
     local name, config = utils.pickEgg(data)
     if not name then
         local selected = utils.settings.farm.Egg
         local selectedConfig = utils.modules.eggs[selected]
-        if not selectedConfig then return "Select an egg" end
-        if selectedConfig.Island and not data.Progression.UnlockedIslands[selectedConfig.Island] then return "Unlock " .. selectedConfig.Island end
-        if selectedConfig.Zone and selectedConfig.Zone ~= "Spawn" and not data.Progression.UnlockedZones[selectedConfig.Zone] then return "Unlock " .. selectedConfig.Zone end
+        if not selectedConfig then
+            utils.hatch.NextAt = os.clock() + 3
+            return "Select an egg"
+        end
+        if selectedConfig.Island and not data.Progression.UnlockedIslands[selectedConfig.Island] then
+            utils.hatch.NextAt = os.clock() + 5
+            return "Unlock " .. selectedConfig.Island
+        end
+        if selectedConfig.Zone and selectedConfig.Zone ~= "Spawn" and not data.Progression.UnlockedZones[selectedConfig.Zone] then
+            utils.hatch.NextAt = os.clock() + 5
+            return "Unlock " .. selectedConfig.Zone
+        end
+        utils.hatch.NextAt = os.clock() + 3
         return "Egg unavailable: " .. selected
     end
     local amount = utils.settings.farm.HatchCount
     if amount > 3 and not utils.modules.perks.Has(data, "x8Egg") and not utils.modules.boostFormula.HasType(data, "OctoHatch") then amount = 3 end
-    amount = math.min(amount, data.Pets.StorageLimit - utils.count(data.Pets.Owned))
-    if amount < 1 then return "Storage full" end
+    local freeSlots = math.max(0, (tonumber(data.Pets.StorageLimit) or 0) - utils.count(data.Pets.Owned))
+    amount = math.min(amount, freeSlots)
+    if amount < 1 then
+        utils.hatch.NextAt = os.clock() + 5
+        return "Inventory full"
+    end
     while amount > 0 and utils.modules.pricing.GetTotal(data, name, config.Price, amount, utils.player) > data.Currencies.Coins - utils.settings.farm.Reserve do amount -= 1 end
     if amount < 1 then
         local price = utils.modules.pricing.GetTotal(data, name, config.Price, 1, utils.player)
         local missing = price - (data.Currencies.Coins - utils.settings.farm.Reserve)
+        utils.hatch.NextAt = os.clock() + 3
         return "Not enough coins - need " .. utils.formatNumber(math.max(0, missing)) .. " more for " .. name
     end
     local root, humanoid = utils.character()
@@ -963,7 +1067,11 @@ function utils.digGame()
                 if error < best then target, best = at, error end
                 if error < 0.003 then break end
             end
-            while runtime.Alive and utils.jobs.Dig.Enabled and workspace:GetServerTimeNow() < target do task.wait(0.01) end
+            while runtime.Alive and utils.jobs.Dig.Enabled do
+                local remaining = target - workspace:GetServerTimeNow()
+                if remaining <= 0 then break end
+                task.wait(math.min(remaining, 0.05))
+            end
             if not utils.jobs.Dig.Enabled then break end
             state = utils.remote("Dig", "Hit", state.Id, round.Sequence, target)
             utils.message("Dig", state.Complete and "Complete" or "Digging")
@@ -1235,18 +1343,47 @@ utils.bind("Machine", "MachineCraftResult", function()
 end)
 
 utils.bind("Egg", "EggHatchResult", function(packet)
-    if type(packet) ~= "table" or not utils.hatch.Pending[packet.Seq] then return end
-    local sentAt = utils.hatch.Pending[packet.Seq].At
+    if type(packet) ~= "table" then
+        if utils.isInventoryFullMessage(packet) then
+            utils.hatch.NextAt = os.clock() + 5
+            utils.setHatchStatus("Inventory full")
+        end
+        return
+    end
+    local messageParts = {}
+    for _, fieldName in ipairs({"Error", "Reason", "Message", "Code", "ErrorCode"}) do
+        local field = packet[fieldName]
+        if type(field) == "string" or type(field) == "number" then
+            table.insert(messageParts, tostring(field))
+        end
+    end
+    local errorText = table.concat(messageParts, " ")
+    local pending = utils.hatch.Pending[packet.Seq]
+    if not pending then
+        if utils.isInventoryFullMessage(errorText) then
+            utils.hatch.NextAt = os.clock() + 5
+            utils.setHatchStatus("Inventory full")
+        end
+        return
+    end
+    local sentAt = pending.At
     utils.hatch.Pending[packet.Seq] = nil
     if packet.Success then
         utils.hatch.NextAt = math.max(os.clock() + 0.2, sentAt + math.max(0.5, 3.5 / (tonumber(packet.Speed) or 1)))
         utils.hatch.Count += #(packet.Pets or {})
-        utils.message("Hatch", packet.Egg .. " | " .. utils.formatNumber(utils.hatch.Count) .. " pets")
+        utils.setHatchStatus("Hatched " .. tostring(#(packet.Pets or {})) .. " pets")
     else
         utils.hatch.NextAt = os.clock() + 4
         utils.hatch.Errors += 1
-        utils.message("Hatch", packet.Error or packet.Reason or "Rejected")
+        if utils.isInventoryFullMessage(errorText) then
+            utils.hatch.NextAt = os.clock() + 5
+            utils.setHatchStatus("Inventory full")
+        else
+            utils.setHatchStatus("Hatch failed: " .. (errorText ~= "" and errorText or "Request rejected"))
+        end
     end
+    local hatchJob = utils.jobs.Hatch
+    if hatchJob and hatchJob.Enabled then hatchJob.Next = utils.hatch.NextAt end
 end)
 utils.bind("Colosseum", "WaveDefenseOpponentSpawned", function(packet)
     if utils.arena.Active and packet and packet.Id then utils.arena.Opponents[packet.Id] = packet end
@@ -1408,14 +1545,6 @@ function utils.reduceGraphics(instance)
         set("Enabled", false)
     elseif instance:IsA("Light") then
         set("Shadows", false)
-    elseif instance:IsA("BasePart") then
-        set("CastShadow", false)
-        local model = instance:FindFirstAncestorOfClass("Model")
-        if not (model and model:FindFirstChildOfClass("Humanoid")) then
-            set("Material", Enum.Material.SmoothPlastic)
-            set("Reflectance", 0)
-            if instance:IsA("MeshPart") then set("RenderFidelity", Enum.RenderFidelity.Performance) end
-        end
     elseif instance:IsA("Terrain") then
         set("WaterWaveSize", 0)
         set("WaterWaveSpeed", 0)
@@ -1434,11 +1563,12 @@ function utils.antiLag()
     state.Connection = runtime:Connect(workspace.DescendantAdded, utils.reduceGraphics)
     state.LightingConnection = runtime:Connect(services.Lighting.DescendantAdded, utils.reduceGraphics)
     utils.reduceGraphics(services.Lighting)
+    utils.reduceGraphics(workspace.Terrain)
     for _, container in ipairs({workspace, services.Lighting}) do
         for index, instance in ipairs(container:GetDescendants()) do
             if not runtime.Alive then return "Stopped" end
             utils.reduceGraphics(instance)
-            if index % 250 == 0 then task.wait() end
+            if index % 100 == 0 then task.wait(0.03) end
         end
     end
     return "Anti Lag enabled"
@@ -1788,11 +1918,17 @@ runtime:Spawn(function()
                     utils.identityReset()
                     job.Busy = false
                     job.Next = os.clock() + math.max(0.1, job.Interval)
-                    if job.Enabled then utils.message(key, success and (result or "Active") or result) end
+                    if key == "Hatch" then
+                        job.Next = math.max(job.Next, utils.hatch.NextAt or 0)
+                        utils.setHatchStatus(success and (result or "Active") or ("Hatch failed: " .. tostring(result)))
+                    end
+                    if job.Enabled and key ~= "Hatch" then
+                        utils.message(key, success and (result or "Active") or result)
+                    end
                 end)
             end
         end
-        task.wait(0.15)
+        task.wait(0.25)
     end
 end)
 runtime:Spawn(function()
@@ -1804,7 +1940,7 @@ runtime:Spawn(function()
                 pcall(function() handle:Set(count) end)
             end
         end
-        task.wait(2)
+        task.wait(5)
     end
 end)
 return utils, window
