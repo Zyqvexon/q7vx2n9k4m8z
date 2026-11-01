@@ -53,7 +53,6 @@ end
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 local window = Rayfield:CreateWindow({
     name = "Silence | Tap Simulator REBORN",
-    subtitle = "Automation  •  Pets  •  Progression",
     theme = "ember",
     sidebarLayout = true,
     profile = "Tap Simulator REBORN",
@@ -77,7 +76,6 @@ local utils = {
     modules = {},
     jobs = {},
     controls = {},
-    status = {},
     next = {},
     travel = {Owner = nil, Origin = nil},
     hatch = {Sequence = 0, Pending = {}, Count = 0, Errors = 0, NextAt = 0},
@@ -95,21 +93,17 @@ local utils = {
         character = {Speed = 24, Jump = 50}
     }
 }
-window:CreateSection({name = "Automation"})
 local tabs = {}
 tabs.main = window:CreateTab({name = "Main"})
 tabs.hatching = window:CreateTab({name = "Hatching"})
 
-window:CreateSection({name = "Pets"})
 tabs.pets = window:CreateTab({name = "Pets"})
 tabs.crafting = window:CreateTab({name = "Pet Crafting"})
 tabs.enchanting = window:CreateTab({name = "Enchanting"})
 
-window:CreateSection({name = "Tools"})
 tabs.teleport = window:CreateTab({name = "Teleports"})
 tabs.misc = window:CreateTab({name = "Misc"})
 
-window:CreateSection({name = "Settings"})
 tabs.config = window:CreateTab({name = "Configuration"})
 
 local function selectedList(value)
@@ -130,7 +124,6 @@ end
 local function notify(title, content, duration)
     window:Notify({title = title, content = tostring(content), duration = duration or 4})
 end
-
 
 function utils.identityReset()
     if type(setthreadidentity) == "function" then setthreadidentity(utils.identity) end
@@ -182,35 +175,10 @@ function utils.remote(group, name, ...)
     return result
 end
 
-utils.activityConsole = tabs.main:CreateConsole({
-    name = "Live activity",
-    text = "Ready. Feature updates will appear here.",
-    height = 138,
-    follow = true,
-    maxLines = 100
-})
-
-function utils.message(key, value)
-    local status = tostring(value or "Idle")
-    utils.status[key] = status
-    if runtime.Alive and utils.activityConsole then
-        utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(key) .. ": " .. status)
-    end
-end
-
-function utils.label(tab, key)
-    utils.status[key] = "Off"
-end
-
-function utils.section(tab, text)
-    tab:CreateSection({name = text})
-end
-
 function utils.job(tab, text, key, interval, callback, cleanup)
     utils.jobs[key] = {Enabled = false, Busy = false, Generation = 0, Callback = callback, Next = 0, Interval = interval, Cleanup = cleanup}
     utils.controls[key .. "Switch"] = tab:CreateToggle({
         name = text,
-        description = "Enable or pause this automation.",
         value = false,
         flag = "Enabled." .. key,
         callback = function(enabled)
@@ -218,18 +186,16 @@ function utils.job(tab, text, key, interval, callback, cleanup)
             job.Generation += 1
             job.Enabled, job.Next = enabled, 0
             if not enabled and cleanup then pcall(cleanup) end
-            utils.message(key, enabled and "Waiting" or "Off")
         end
     })
 end
 
 function utils.action(tab, text, key, callback)
-    return tab:CreateButton({name = text, description = "Run this action once.", callback = function()
+    return tab:CreateButton({name = text, callback = function()
         if utils.jobs[key] and utils.jobs[key].Busy then return end
         runtime:Spawn(function()
             local success, result = pcall(callback)
             utils.identityReset()
-            utils.message(key, success and (result or "Requested") or result)
             if not success then notify(text, result, 4) end
         end)
     end})
@@ -387,7 +353,7 @@ end
 
 function utils.tap()
     if utils.syncTapCounter then
-        -- Keep manual UI clicks and script taps on the same server sequence.
+
         local sequence = utils.modules.tapController:GetManualTapCount() + 1
         debug.setupvalue(utils.tapCounter, 1, sequence)
         utils.remote("Tap", "TapRequested", {Auto = false, Source = "button", ClientSequence = sequence})
@@ -868,7 +834,6 @@ function utils.memoryGame()
             for index, card in ipairs(state.Cards) do if card.Pet then utils.memory.Known[index] = card.Pet end end
             first = first and nil or choice
             if (state.UnlockAt or 0) > 0 then first = nil end
-            utils.message("Memory", tostring(state.Pairs or 0) .. "/6 pairs")
         end
         if state.Outcome ~= "Playing" then utils.memory.Id = nil end
         return state.Outcome or "Paused"
@@ -897,7 +862,6 @@ function utils.digGame()
             while runtime.Alive and utils.jobs.Dig.Enabled and workspace:GetServerTimeNow() < target do task.wait(0.01) end
             if not utils.jobs.Dig.Enabled then break end
             state = utils.remote("Dig", "Hit", state.Id, round.Sequence, target)
-            utils.message("Dig", state.Complete and "Complete" or "Digging")
         end
         if state and state.Complete then return "Complete" end
         pcall(utils.remote, "Dig", "Cancel")
@@ -1172,11 +1136,9 @@ utils.bind("Egg", "EggHatchResult", function(packet)
     if packet.Success then
         utils.hatch.NextAt = math.max(os.clock() + 0.2, sentAt + math.max(0.5, 3.5 / (tonumber(packet.Speed) or 1)))
         utils.hatch.Count += #(packet.Pets or {})
-        utils.message("Hatch", packet.Egg .. " | " .. utils.formatNumber(utils.hatch.Count) .. " pets")
     else
         utils.hatch.NextAt = os.clock() + 4
         utils.hatch.Errors += 1
-        utils.message("Hatch", packet.Error or packet.Reason or "Rejected")
     end
 end)
 utils.bind("Colosseum", "WaveDefenseOpponentSpawned", function(packet)
@@ -1187,18 +1149,11 @@ utils.bind("Colosseum", "WaveDefenseOpponentDefeated", function(packet)
 end)
 utils.bind("Colosseum", "WaveDefenseWaveStarting", function(packet)
     utils.arena.Wave = type(packet) == "table" and (packet.Wave or packet.WaveNumber or 0) or tonumber(packet) or 0
-    utils.message("Arena", "Wave " .. tostring(utils.arena.Wave))
 end)
 utils.bind("Colosseum", "WaveDefenseGameOver", function() utils.arena.Active = false end)
 utils.bind("LuckyDucky", "Spawn", function(packet)
     if utils.jobs.Rewards and utils.jobs.Rewards.Enabled and packet and packet.Id then pcall(utils.remote, "LuckyDucky", "Claim", packet.Id) end
 end)
-for _, group in ipairs({"Machine", "Pet", "Rebirth", "Island"}) do
-    local event = ({Machine = "MachineCraftResult", Pet = "PetActionResult", Rebirth = "RebirthResult", Island = "IslandUnlockResult"})[group]
-    utils.bind(group, event, function(packet)
-        if type(packet) == "table" and (packet.Success == false or packet.Error) then utils.message(group, packet.Error or packet.Reason or "Rejected") end
-    end)
-end
 
 utils.load("chests", "Shared.Game.TapChestConfig")
 function utils.chestModel(id)
@@ -1405,7 +1360,7 @@ function utils.hideHatch(enabled)
         table.insert(state.Hooks, {Module = module, Name = name, Original = module[name], Replacement = callback})
         module[name] = callback
     end
-    -- Complete the game's sequence so receipts and queued results still settle.
+
     replace(utils.modules.hatchRenderer, "Play", function(self, egg, packet, done)
         if type(done) == "function" then task.defer(done) end
     end)
@@ -1419,15 +1374,8 @@ function utils.hideHatch(enabled)
     utils.setting("HatchAnimation", 3)
 end
 
-tabs.main:CreateText({
-    name = "Welcome to Silence",
-    text = "A focused control panel for Tap Simulator REBORN. Choose a section in the sidebar and monitor feature updates in Live activity."
-})
-tabs.main:CreateDivider({text = "Automation"})
-utils.section(tabs.main, "Clicking")
 utils.job(tabs.main, "Auto Tap", "Tap", utils.modules.gameConfig.ManualTapInterval, utils.tap)
 utils.controls.HideClicks = tabs.main:CreateToggle({name = "Hide Clicks", value = false, flag = "Visual.HideTaps", callback = utils.hideClicks})
-utils.section(tabs.main, "Rebirths")
 tabs.main.rebirthValues, tabs.main.rebirthMap = {"Max"}, {}
 function utils.refreshRebirths()
     local values, map = {"Max"}, {}
@@ -1447,20 +1395,13 @@ tabs.main.rebirthDropdown = tabs.main:CreateDropdown({name = "Select Rebirth Amo
     end
 })
 utils.job(tabs.main, "Auto Rebirth", "Rebirth", 0.5, utils.rebirth)
-utils.section(tabs.main, "Progression")
 utils.job(tabs.main, "Auto Skill Tree", "Skills", 0.5, utils.skills)
 utils.job(tabs.main, "Auto Unlock Islands", "Islands", 5, utils.islands)
 utils.job(tabs.main, "Auto Claim Rewards", "Rewards", 20, utils.rewards)
 utils.job(tabs.main, "Auto Close Rewards", "RewardPopup", 0.3, utils.closeRewards)
 utils.job(tabs.main, "Auto Claim Chests", "Chests", 30, utils.chests)
-utils.label(tabs.main, "Rebirth")
-utils.section(tabs.main, "Performance")
 utils.action(tabs.main, "Anti Lag", "Performance", utils.antiLag)
-utils.label(tabs.main, "Performance")
 
--- Hatching ------------------------------------------------------------------
-tabs.hatching:CreateText({name = "Egg controls", text = "Choose an egg, set the hatch amount, then enable Auto Hatch. Pet-delete options cover the full egg catalog."})
-utils.section(tabs.hatching, "Hatching")
 utils.eggNames, utils.eggMap = {}, {}
 for _, egg in ipairs(utils.sortedEggs()) do
     local label = egg.Name .. " - " .. utils.formatNumber(egg.Price)
@@ -1484,8 +1425,6 @@ tabs.hatching:CreateDropdown({name = "Hatch Amount", options = {"1x", "3x", "8x"
 utils.settings.farm.HatchCount = 8
 utils.job(tabs.hatching, "Auto Hatch", "Hatch", 0.2, utils.hatchEgg)
 tabs.hatching:CreateToggle({name = "Hide Hatch Animation", value = false, flag = "Visual.HideHatch", callback = utils.hideHatch})
-utils.label(tabs.hatching, "Hatch")
-utils.section(tabs.hatching, "Egg Auto Delete")
 local eggDeleteValues, eggDeleteSelected = utils.refreshEggDelete()
 tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Select Pets to Delete", options = eggDeleteValues, value = eggDeleteSelected, multiSelect = true,
     callback = function(values)
@@ -1505,14 +1444,10 @@ tabs.hatching.rarityDropdown = tabs.hatching:CreateDropdown({name = "Select Rari
     callback = utils.deleteEggRarities
 })
 
--- Pets ----------------------------------------------------------------------
-tabs.pets:CreateText({name = "Pet management", text = "Choose team focus, automate team and treat actions, or configure which pet names, rarities, and variants can be deleted."})
-utils.section(tabs.pets, "Team")
 utils.dropdown(tabs.pets, "Select Team Focus", utils.settings.pets, "Team", {"Clicks", "Gems", "Luck"}, "Pets.Team")
 utils.job(tabs.pets, "Auto Equip Best", "Team", 10, utils.equip)
 utils.action(tabs.pets, "Equip Best", "Team", utils.equip)
 utils.job(tabs.pets, "Auto Feed Treats", "Treats", 10, utils.feed)
-utils.section(tabs.pets, "Auto Delete")
 utils.rarities = {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}
 local deleteRarities = table.clone(utils.rarities)
 table.insert(deleteRarities, 1, "All Rarities")
@@ -1525,10 +1460,7 @@ tabs.pets.deleteNames = tabs.pets:CreateDropdown({name = "Select Pets", options 
     end
 })
 utils.job(tabs.pets, "Auto Delete Pets", "Cleanup", 15, utils.sellPets)
-utils.label(tabs.pets, "Cleanup")
 
--- Crafting ------------------------------------------------------------------
-tabs.crafting:CreateText({name = "Pet crafting", text = "Choose which pet names to include in each machine. The catalog list remains available even when you acquire new pets."})
 tabs.crafting.petDropdowns = {}
 function utils.petNames(tier)
     local names = {}
@@ -1540,7 +1472,6 @@ function utils.petNames(tier)
 end
 for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Golden"}, {"Rainbow", "Shiny", "Diamond"}}) do
     local title, machine, tier = row[1], row[2], row[3]
-    utils.section(tabs.crafting, title .. " Pets")
     if machine == "Shiny" then
         tabs.crafting:CreateDropdown({name = "Select Time", options = {"5h - 2 Pets", "2.5h - 3 Pets", "1h - 4 Pets", "30s - 5 Pets"}, value = "30s - 5 Pets", flag = "Craft.RainbowAmount",
             callback = function(value) value = selectedOne(value); utils.settings.pets.RainbowCount = tonumber(value:match("(%d+) Pets")) or 5 end})
@@ -1556,13 +1487,9 @@ for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Go
     end
     tabs.crafting.petDropdowns[tier] = utils.multi(tabs.crafting, "Select " .. title .. " Pets", utils.settings.pets, title .. "Pets", utils.petNames(tier), "Craft." .. title .. "Pets")
     utils.job(tabs.crafting, "Auto Craft " .. title, machine, 8, function() return utils.craft(machine) end)
-    utils.label(tabs.crafting, machine)
 end
 utils.job(tabs.crafting, "Auto Collect Shiny Stars", "Stars", 5, utils.collectStars)
 
--- Enchanting ----------------------------------------------------------------
-tabs.enchanting:CreateText({name = "Enchant selection", text = "Select pet categories by name, tier, and rarity. The selection automatically matches matching pets in your current inventory."})
-utils.section(tabs.enchanting, "Enchanting")
 utils.multi(tabs.enchanting, "Select Enchants", utils.settings.enchant, "Traits", utils.keys(utils.modules.enchants.Enchants), "Enchant.Traits")
 function utils.enchantPets()
     local catalog = {}
@@ -1613,11 +1540,7 @@ end
 tabs.enchanting.petDropdown = tabs.enchanting:CreateDropdown({name = "Select Pets", options = utils.enchantPets(), value = {"Equipped Pets"}, multiSelect = true, flag = "Enchant.Pets",
     callback = utils.selectEnchantPets})
 utils.job(tabs.enchanting, "Auto Enchant", "Enchant", 2, utils.enchant)
-utils.label(tabs.enchanting, "Enchant")
 
--- Teleports -----------------------------------------------------------------
-tabs.teleport:CreateText({name = "Island travel", text = "Select an unlocked island and use Teleport. Teleport on Join repeats the selected destination after your character loads."})
-utils.section(tabs.teleport, "Islands")
 utils.settings.destination = {Island = "Spawn", OnJoin = false}
 utils.islandNames = {"Spawn"}
 for _, island in ipairs(utils.sortedIslands()) do table.insert(utils.islandNames, island.Name) end
@@ -1632,21 +1555,13 @@ tabs.teleport:CreateToggle({name = "Teleport on Join", value = false, flag = "Tr
     utils.settings.destination.OnJoin = enabled
     if enabled then runtime:Spawn(function() task.wait(1); if runtime.Alive and utils.settings.destination.OnJoin then pcall(utils.teleport) end end) end
 end})
-utils.label(tabs.teleport, "Travel")
 
--- Miscellaneous ------------------------------------------------------------
-tabs.misc:CreateText({name = "Extra automation", text = "Optional minigame, potion, shrine, totem, and relic helpers. Enable only the features you need."})
-utils.section(tabs.misc, "Minigames")
 utils.job(tabs.misc, "Auto Colosseum", "Arena", 20, utils.colosseum, function()
     if utils.arena.Active then pcall(utils.remote, "Colosseum", "EndWaveDefense") end
     utils.arena.Active = false
 end)
 utils.job(tabs.misc, "Auto Memory Match", "Memory", 20, utils.memoryGame)
 utils.job(tabs.misc, "Auto Dig", "Dig", 20, utils.digGame)
-utils.label(tabs.misc, "Arena")
-utils.label(tabs.misc, "Memory")
-utils.label(tabs.misc, "Dig")
-utils.section(tabs.misc, "Potions")
 utils.multi(tabs.misc, "Select Potion Types", utils.settings.boosts, "Types", {"Coins", "Gems", "Luck", "OctoHatch", "GoldenHatch", "EnchantAnimSpeed"}, "Boosts.Types")
 utils.job(tabs.misc, "Auto Use Potions", "Boosts", 15, utils.potions)
 utils.dropdown(tabs.misc, "Select Potion", utils.settings.boosts, "Brew", utils.modules.brew.Potions, "Boosts.Brew")
@@ -1658,7 +1573,6 @@ utils.action(tabs.misc, "Buy Potions", "Potions", function()
         return "Purchased"
     end)
 end)
-utils.section(tabs.misc, "Boosts")
 utils.dropdown(tabs.misc, "Select Blessing", utils.settings.boosts, "Shrine", {"Luck", "Golden", "AutoClicker"}, "Boosts.Shrine")
 utils.job(tabs.misc, "Auto Shrine", "Shrine", 30, utils.shrine)
 utils.job(tabs.misc, "Auto Totems", "Totems", 30, utils.totems)
@@ -1667,8 +1581,6 @@ for _, name in ipairs(utils.modules.relics.Order) do table.insert(utils.relicNam
 utils.dropdown(tabs.misc, "Select Relic", utils.settings.boosts, "Relic", utils.relicNames, "Boosts.Relic")
 utils.job(tabs.misc, "Auto Relic", "Relic", 20, utils.relic)
 
--- Configuration ------------------------------------------------------------
-tabs.config:CreateText({name = "Interface and presets", text = "Rayfield Gen2 saves flagged controls automatically. You can also save, load, and delete named configurations below."})
 utils.settings.config = {Name = "Default"}
 function utils.configName()
     local name = tostring(utils.settings.config.Name or ""):match("^%s*(.-)%s*$")
@@ -1703,14 +1615,12 @@ utils.action(tabs.config, "List Configurations", "Configuration", function()
     notify("Saved configurations", content, 6)
     return tostring(#names) .. " configuration(s)"
 end)
-tabs.config:CreateDivider({text = "Appearance"})
 tabs.config:CreateDropdown({name = "Theme", options = {"default", "cobalt", "ember", "amethyst", "frost", "rose"}, value = "ember", forgetState = true,
     callback = function(value)
         local themeName = selectedOne(value)
         if themeName then window:ChangeTheme(themeName) end
     end
 })
-tabs.config:CreateDivider({text = "Session controls"})
 utils.action(tabs.config, "Stop All Automations", "Session", function()
     utils.stop()
     return "All automations stopped"
@@ -1719,9 +1629,7 @@ utils.action(tabs.config, "Unload Silence", "Session", function()
     runtime:Destroy()
     return "Unloaded"
 end)
-utils.label(tabs.config, "Configuration")
-
-window:Toast({title = "Silence loaded", subtitle = "Rayfield Gen2 interface ready", duration = 4})
+window:Toast({title = "Silence loaded", duration = 4})
 
 runtime:Connect(utils.player.Idled, function()
     pcall(function()
@@ -1752,7 +1660,6 @@ runtime:Spawn(function()
             deadline = deadline or os.clock()
             local success, result = pcall(job.Callback)
             utils.identityReset()
-            if not success then utils.message("Tap", result) end
             deadline += job.Interval
             if deadline < os.clock() then deadline = os.clock() + job.Interval end
             task.wait(math.max(0, deadline - os.clock()))
@@ -1773,7 +1680,6 @@ runtime:Spawn(function()
                     utils.identityReset()
                     job.Busy = false
                     job.Next = os.clock() + math.max(0.1, job.Interval)
-                    if job.Enabled then utils.message(key, success and (result or "Active") or result) end
                 end)
             end
         end
