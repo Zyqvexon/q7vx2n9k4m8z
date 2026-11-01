@@ -51,6 +51,10 @@ local ColosseumAdapter = require(RS.Controllers.Minigames.ColosseumClientAdapter
 
 local EggConfig = require(RS.Shared.Pets.LaunchEggConfig)
 local EggPricing = require(RS.Shared.Pets.EggPricing)
+local EggIdleAnimation
+pcall(function()
+    EggIdleAnimation = require(RS.Modules.Client.Pets.EggIdleAnimation)
+end)
 local GamepassPerks = require(RS.Shared.Monetization.GamepassPerks)
 local BoostFormula = require(RS.Shared.Items.BoostFormula)
 local BoostConfig = require(RS.Shared.Items.BoostConfig)
@@ -135,6 +139,104 @@ local function TeleportTo(targetPos)
         task.wait(0.4)
         hrp = char:FindFirstChild("HumanoidRootPart")
         if hrp and (hrp.Position - targetPos).Magnitude <= 15 then return true end
+    end
+    return false
+end
+
+-- EggController uses a strict proximity threshold when selecting an egg.
+-- This helper verifies against that tighter range instead of TeleportTo's
+-- generic 10/15-stud tolerance.
+local function TeleportToRange(targetPos, maxDistance)
+    if typeof(targetPos) ~= "Vector3" then return false end
+    maxDistance = tonumber(maxDistance) or 8.5
+
+    for attempt = 1, 3 do
+        local char = LocalPlayer.Character
+        if not char then return false end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return false end
+        if (hrp.Position - targetPos).Magnitude <= maxDistance then return true end
+
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
+        hrp.Anchored = true
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        for _ = 1, 5 do
+            hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
+            task.wait(0.05)
+        end
+        hrp.Anchored = false
+        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        task.wait(0.25)
+
+        hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp and (hrp.Position - targetPos).Magnitude <= maxDistance then
+            return true
+        end
+    end
+    return false
+end
+
+local function getObjectBounds(obj)
+    if not obj then return nil, nil end
+    if obj:IsA("BasePart") then
+        return obj.CFrame, obj.Size
+    end
+    if obj:IsA("Model") then
+        local ok, cf, size = pcall(function()
+            local boundsCFrame, boundsSize = obj:GetBoundingBox()
+            return boundsCFrame, boundsSize
+        end)
+        if ok and cf and size then return cf, size end
+    end
+    return nil, nil
+end
+
+local function isInsideObjectBounds(obj, worldPosition)
+    local boundsCFrame, boundsSize = getObjectBounds(obj)
+    if not boundsCFrame or not boundsSize then return false end
+    local localPosition = boundsCFrame:PointToObjectSpace(worldPosition)
+    local half = boundsSize / 2
+    return math.abs(localPosition.X) <= half.X
+        and math.abs(localPosition.Y) <= half.Y
+        and math.abs(localPosition.Z) <= half.Z
+end
+
+-- The Golden Machine's interaction detector checks the tagged object's actual
+-- bounding box, not a generic distance from its first child part.
+local function TeleportIntoInteractionPoint(interactionPoint)
+    local boundsCFrame, boundsSize = getObjectBounds(interactionPoint)
+    if not boundsCFrame or not boundsSize then return false end
+
+    local verticalOffset = math.min(0.75, math.max(0, boundsSize.Y * 0.2))
+    local destination = boundsCFrame:PointToWorldSpace(Vector3.new(0, verticalOffset, 0))
+
+    for attempt = 1, 3 do
+        local char = LocalPlayer.Character
+        if not char then return false end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return false end
+
+        if isInsideObjectBounds(interactionPoint, hrp.Position) then return true end
+
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
+        hrp.Anchored = true
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        for _ = 1, 4 do
+            hrp.CFrame = CFrame.new(destination)
+            task.wait(0.05)
+        end
+        hrp.Anchored = false
+        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        task.wait(0.2)
+
+        hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp and isInsideObjectBounds(interactionPoint, hrp.Position) then
+            return true
+        end
     end
     return false
 end
@@ -333,17 +435,48 @@ local HatchState = {
     Hatched = 0, Status = "Idle",
 }
 
-EggService.EggHatchResult:Connect(function()
+EggService.EggHatchResult:Connect(function(result)
     HatchState.isRequestPending = false
     HatchState.lastHatchResultTime = os.clock()
+
+    if type(result) == "table" and result.Success == true then
+        HatchState.Hatched = HatchState.Hatched + 1
+        HatchState.Status = "Hatched | total " .. HatchState.Hatched
+    elseif type(result) == "table" and result.Error then
+        HatchState.Status = "Hatch failed: " .. tostring(result.Error)
+    else
+        HatchState.Status = "Hatch request completed"
+    end
 end)
 
-local function getEggPos(eggName)
+local function getEggModel(eggName)
     local eggsFolder = Workspace:FindFirstChild("Eggs")
     if not eggsFolder then return nil end
-    local eggModel = eggsFolder:FindFirstChild(eggName)
+    return eggsFolder:FindFirstChild(eggName)
+end
+
+local function getEggPos(eggName)
+    local eggModel = getEggModel(eggName)
     if not eggModel then return nil end
-    return getPartPos(eggModel)
+
+    -- EggController uses EggIdleAnimation.GetPosition for its proximity test.
+    if EggIdleAnimation and type(EggIdleAnimation.GetPosition) == "function" then
+        local ok, position = pcall(EggIdleAnimation.GetPosition, eggModel)
+        if ok and typeof(position) == "Vector3" then return position end
+    end
+
+    -- Match EggController's fallback: prefer the part under the "Egg" child,
+    -- then that child's PrimaryPart/first BasePart, then the outer model root.
+    local eggRoot = eggModel:FindFirstChild("Egg")
+    if eggRoot and eggRoot:IsA("BasePart") then
+        return eggRoot.Position
+    elseif eggRoot and eggRoot:IsA("Model") then
+        local rootPart = eggRoot.PrimaryPart or eggRoot:FindFirstChildWhichIsA("BasePart", true)
+        if rootPart then return rootPart.Position end
+    end
+    local rootPart = eggModel.PrimaryPart or eggModel:FindFirstChildWhichIsA("BasePart", true)
+    if rootPart then return rootPart.Position end
+    return nil
 end
 
 task.spawn(function()
@@ -372,19 +505,39 @@ task.spawn(function()
         local pos = getEggPos(HatchState.SelectedEgg)
         if not pos then
             HatchState.Status = "Egg not loaded"
+            task.wait(0.5)
             continue
         end
-        TeleportTo(pos)
+
+        -- EggController only recognizes an egg inside its 10-stud proximity
+        -- range. Aim for 8 studs to leave room for character movement/physics.
+        if not TeleportToRange(pos, 8.5) then
+            HatchState.Status = "Could not reach egg"
+            task.wait(0.5)
+            continue
+        end
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp or (hrp.Position - pos).Magnitude >= 9 then
+            HatchState.Status = "Outside egg range"
+            task.wait(0.5)
+            continue
+        end
+
         HatchState.isRequestPending = true
+        HatchState.Status = "Waiting for hatch result..."
         EggService.EggHatchRequested:Fire({
             Egg = HatchState.SelectedEgg,
             Count = HatchState.SelectedAmount,
             Auto = true,
             Seq = math.random(1, 100000),
         })
-        HatchState.Hatched = HatchState.Hatched + 1
-        HatchState.Status = "Hatched | total " .. HatchState.Hatched
-        task.delay(3, function() if HatchState.isRequestPending then HatchState.isRequestPending = false end end)
+        task.delay(12, function()
+            if HatchState.isRequestPending then
+                HatchState.isRequestPending = false
+                HatchState.Status = "Hatch timed out; retrying"
+            end
+        end)
     end
 end)
 
@@ -459,20 +612,34 @@ local CraftState = {
     isRequestPending = false,
     lastCraftResultTime = 0,
     GoldenCrafted = 0,
+    Status = "Idle",
 }
 
-MachineService.MachineCraftResult:Connect(function()
+MachineService.MachineCraftResult:Connect(function(result)
     CraftState.isRequestPending = false
     CraftState.lastCraftResultTime = os.clock()
+
+    if type(result) == "table" and result.Success == true then
+        CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
+        CraftState.Status = "Golden craft successful"
+    elseif type(result) == "table" and result.Error then
+        CraftState.Status = "Golden craft failed: " .. tostring(result.Error)
+    else
+        CraftState.Status = "Golden craft result received"
+    end
 end)
 
-local function getGoldenMachinePos()
+local function getGoldenMachineTarget()
+    local attributeFallback
     for _, v in CollectionService:GetTagged("InteractionPoint") do
-        if v:GetAttribute("UpgradeName") == "Golden" or v.Name == "Golden" then
-            return getPartPos(v)
+        if v.Name == "Golden" then
+            return v
+        end
+        if v:GetAttribute("UpgradeName") == "Golden" then
+            attributeFallback = attributeFallback or v
         end
     end
-    return nil
+    return attributeFallback
 end
 
 local function petMatchesMutation(pet, mutation)
@@ -511,12 +678,41 @@ task.spawn(function()
             if #ids >= CraftState.PetsToUse then
                 local selected = {}
                 for i = 1, CraftState.PetsToUse do table.insert(selected, ids[i]) end
+
+                local machine = getGoldenMachineTarget()
+                if not machine then
+                    CraftState.Status = "Golden Machine interaction point not found"
+                    task.wait(0.75)
+                    break
+                end
+
+                -- The game's own InteractionPoint detector tests the player's
+                -- position against the tagged part/model bounding box. A generic
+                -- 10-15 stud distance check is not sufficient for this machine.
+                if not TeleportIntoInteractionPoint(machine) then
+                    CraftState.Status = "Could not enter Golden Machine range"
+                    task.wait(0.75)
+                    break
+                end
+
+                task.wait(0.2)
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if not hrp or not isInsideObjectBounds(machine, hrp.Position) then
+                    CraftState.Status = "Outside Golden Machine interaction area"
+                    task.wait(0.75)
+                    break
+                end
+
                 CraftState.isRequestPending = true
-                local pos = getGoldenMachinePos()
-                if pos then TeleportTo(pos) end
+                CraftState.Status = "Crafting Golden pets..."
                 MachineService.MachineCraftRequested:Fire({ Machine = "Golden", PetIds = selected })
-                CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
-                task.delay(5, function() if CraftState.isRequestPending then CraftState.isRequestPending = false end end)
+                task.delay(5, function()
+                    if CraftState.isRequestPending then
+                        CraftState.isRequestPending = false
+                        CraftState.Status = "Golden craft timed out; retrying"
+                    end
+                end)
                 break
             end
         end
@@ -1732,8 +1928,8 @@ task.spawn(function()
     while true do
         task.wait(0.5)
         CraftStatus:Set(string.format(
-            "Golden: %d | Honey Pot: %d claimed, %d crafted | %s",
-            CraftState.GoldenCrafted, HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Status
+            "Golden: %d (%s) | Honey Pot: %d claimed, %d crafted | %s",
+            CraftState.GoldenCrafted, CraftState.Status, HoneyPotState.Claimed, HoneyPotState.Crafted, HoneyPotState.Status
         ))
     end
 end)
