@@ -59,6 +59,7 @@ local GamepassPerks = require(RS.Shared.Monetization.GamepassPerks)
 local BoostFormula = require(RS.Shared.Items.BoostFormula)
 local BoostConfig = require(RS.Shared.Items.BoostConfig)
 local MachineConfig = require(RS.Shared.Pets.MachineConfig)
+local PadProbe = require(RS.Shared.Core.PadProbe)
 local SkillTreeConfig = require(RS.Shared.Progression.SkillTreeConfig)
 local SkillTreeFormula = require(RS.Shared.Progression.SkillTreeFormula)
 local SkillTreeRequirements = require(RS.Shared.Progression.SkillTreeRequirements)
@@ -346,28 +347,36 @@ task.spawn(function()
     end
 end)
 
+-- Seq is a per-session request counter, like EggController's local v_u_73.
 local HatchState = {
     HatchRunning = false,
     SelectedEgg = nil, SelectedAmount = 1,
     HatchDelay = 0.5,
     isRequestPending = false,
     lastHatchResultTime = 0,
-    Seq = 0, PendingAmount = 1,
+    Seq = 0,
+    PendingSeq = nil, PendingEgg = nil, PendingAmount = 1,
     Hatched = 0, Status = "Idle",
 }
 
 EggService.EggHatchResult:Connect(function(result)
+    if type(result) ~= "table" then return end
+    if not HatchState.isRequestPending then return end
+    if result.Seq ~= nil and result.Seq ~= HatchState.PendingSeq then return end
+    if result.Egg ~= nil and result.Egg ~= HatchState.PendingEgg then return end
+
     HatchState.isRequestPending = false
     HatchState.lastHatchResultTime = os.clock()
 
-    if type(result) == "table" and result.Success == true then
-        local amount = tonumber(result.Count) or HatchState.PendingAmount or 1
+    if result.Success == true then
+        local amount = type(result.Pets) == "table" and #result.Pets
+            or tonumber(result.Count) or HatchState.PendingAmount or 1
         HatchState.Hatched = HatchState.Hatched + amount
         HatchState.Status = "Hatch successful | total " .. HatchState.Hatched
-    elseif type(result) == "table" and result.Error then
+    elseif result.Error then
         HatchState.Status = "Hatch rejected: " .. tostring(result.Error)
     else
-        HatchState.Status = "Hatch result received"
+        HatchState.Status = "Hatch failed: server returned no success flag"
     end
 end)
 
@@ -404,10 +413,9 @@ end
 
 local function getCharacterRoot()
     local char = LocalPlayer.Character
-    if not char then return nil, nil end
-    local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    return root, hrp
+    if not char then return nil end
+    -- EggController checks HumanoidRootPart.Position, not an arbitrary PrimaryPart.
+    return char:FindFirstChild("HumanoidRootPart")
 end
 
 -- The client egg selector uses the animated egg position and a 10-stud
@@ -417,10 +425,10 @@ local function TeleportToRange(targetPos, maxDistance)
     maxDistance = tonumber(maxDistance) or 8.5
 
     for attempt = 1, 4 do
-        local root, hrp = getCharacterRoot()
-        if not root or not hrp then return false, "character root missing" end
+        local hrp = getCharacterRoot()
+        if not hrp then return false, "HumanoidRootPart missing" end
 
-        if (root.Position - targetPos).Magnitude <= maxDistance then
+        if (hrp.Position - targetPos).Magnitude <= maxDistance then
             return true
         end
 
@@ -431,8 +439,8 @@ local function TeleportToRange(targetPos, maxDistance)
         hrp.AssemblyAngularVelocity = Vector3.zero
         task.wait(0.2)
 
-        root = select(1, getCharacterRoot())
-        if root and (root.Position - targetPos).Magnitude <= maxDistance then
+        hrp = getCharacterRoot()
+        if hrp and (hrp.Position - targetPos).Magnitude <= maxDistance then
             return true
         end
     end
@@ -500,24 +508,35 @@ task.spawn(function()
             end
 
             HatchState.Status = "Teleporting to " .. eggName .. "..."
+            local normalRange = eggName == "30M Visits" and 12 or 10
             local reached, reason = TeleportToRange(pos, eggName == "30M Visits" and 10.5 or 8.5)
             if not reached then
                 HatchState.Status = "Teleport failed: " .. tostring(reason)
                 return
             end
 
-            -- Auto=true in the game's client is only sent when its own
-            -- built-in auto-hatch state is active for this egg. This script
-            -- runs its own loop, so send a normal single hatch request.
+            -- Give the server time to observe the replicated character position,
+            -- then verify against the same range used by EggController.
+            HatchState.Status = "Waiting for position replication..."
+            task.wait(0.5)
+            local currentEggPos = getEggPos(eggName) or pos
+            local hrp = getCharacterRoot()
+            if not hrp or (hrp.Position - currentEggPos).Magnitude > normalRange then
+                HatchState.Status = "Too far from egg after teleport replication"
+                return
+            end
+
             HatchState.Seq = HatchState.Seq + 1
+            HatchState.PendingSeq = HatchState.Seq
+            HatchState.PendingEgg = eggName
             HatchState.PendingAmount = amount
             HatchState.isRequestPending = true
-            HatchState.Status = "Sending hatch request..."
+            HatchState.Status = "Sending auto-hatch request..."
             local fired, fireError = pcall(function()
                 EggService.EggHatchRequested:Fire({
                     Egg = eggName,
                     Count = amount,
-                    Auto = false,
+                    Auto = true,
                     Seq = HatchState.Seq,
                 })
             end)
@@ -527,8 +546,9 @@ task.spawn(function()
                 return
             end
 
+            local requestSeq = HatchState.PendingSeq
             task.delay(12, function()
-                if HatchState.isRequestPending then
+                if HatchState.isRequestPending and HatchState.PendingSeq == requestSeq then
                     HatchState.isRequestPending = false
                     HatchState.Status = "No hatch response from server"
                     HatchState.lastHatchResultTime = os.clock()
@@ -614,13 +634,15 @@ local CraftState = {
     isRequestPending = false,
     lastCraftResultTime = 0,
     GoldenCrafted = 0,
+    RequestId = 0,
+    PendingRequestId = nil,
     Status = "Idle",
 }
 
 MachineService.MachineCraftResult:Connect(function(result)
-    if type(result) == "table" and result.Machine and result.Machine ~= "Golden" then
-        return
-    end
+    -- Other machine/fuse requests can share this result event.
+    if type(result) ~= "table" or result.Machine ~= "Golden" then return end
+    if not CraftState.isRequestPending then return end
 
     CraftState.isRequestPending = false
     CraftState.lastCraftResultTime = os.clock()
@@ -649,14 +671,18 @@ end
 local function getCharacterRootParts()
     local char = LocalPlayer.Character
     if not char then return nil, nil end
-    return char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"), char:FindFirstChild("HumanoidRootPart")
+    -- MachineController uses Character.PrimaryPart for InteractionPoint checks.
+    return char.PrimaryPart, char:FindFirstChild("HumanoidRootPart")
 end
 
-local function getGoldenBoundsPosition(interactionPoint, worldPosition)
+local function getGoldenBoundsPosition(interactionPoint, primaryPart)
     local boundsCFrame, boundsSize = getObjectBounds(interactionPoint)
-    if not boundsCFrame or not boundsSize then return false end
+    if not boundsCFrame or not boundsSize or not primaryPart then return false end
 
-    local localPosition = boundsCFrame:PointToObjectSpace(worldPosition)
+    -- Match MachineController's PadProbe.Position(primaryPart) calculation.
+    local probePosition = PadProbe.Position(primaryPart)
+    if typeof(probePosition) ~= "Vector3" then return false end
+    local localPosition = boundsCFrame:PointToObjectSpace(probePosition)
     local half = boundsSize / 2
 
     -- Matches the game's InteractionPoint test: X/Z use the bounds, while
@@ -682,7 +708,7 @@ local function TeleportIntoInteractionPoint(interactionPoint)
         local root, hrp = getCharacterRootParts()
         if not root or not hrp then return false, "character root missing" end
 
-        if getGoldenBoundsPosition(interactionPoint, root.Position) then
+        if getGoldenBoundsPosition(interactionPoint, root) then
             return true
         end
 
@@ -693,7 +719,7 @@ local function TeleportIntoInteractionPoint(interactionPoint)
         task.wait(0.2)
 
         root = select(1, getCharacterRootParts())
-        if root and getGoldenBoundsPosition(interactionPoint, root.Position) then
+        if root and getGoldenBoundsPosition(interactionPoint, root) then
             return true
         end
     end
@@ -701,14 +727,17 @@ local function TeleportIntoInteractionPoint(interactionPoint)
     return false, "teleport did not enter the Golden interaction bounds"
 end
 
+local function hasPetValue(value)
+    if value == nil or value == false or value == "" then return false end
+    if type(value) == "table" then return next(value) ~= nil end
+    return true
+end
+
 local function petMatchesMutation(pet, mutation)
-    if mutation == "None" then
-        local mut = pet.Mutation
-        if mut == nil or mut == "" then return true end
-        if type(mut) == "table" and #mut == 0 then return true end
-        return false
-    end
     local mut = pet.Mutation
+    if mutation == "None" then
+        return not hasPetValue(mut)
+    end
     if type(mut) == "string" then return mut == mutation end
     if type(mut) == "table" then
         for _, m in pairs(mut) do
@@ -736,9 +765,13 @@ task.spawn(function()
             local groups = {}
             local owned = (data.Pets and data.Pets.Owned) or {}
             local eligibleCount = 0
+            local goldenSourceTier = (MachineConfig.Golden and MachineConfig.Golden.SourceTier) or "Normal"
             for id, pet in pairs(owned) do
-                if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen
-                    and not pet.Enchant and not pet.Signature
+                if type(pet) == "table"
+                    and pet.Tier == goldenSourceTier
+                    and pet.Locked ~= true
+                    and pet.Frozen == nil
+                    and not hasPetValue(pet.Enchant)
                     and petMatchesMutation(pet, CraftState.SelectedMutation) then
                     eligibleCount = eligibleCount + 1
                     if type(pet.Name) == "string" then
@@ -782,6 +815,16 @@ task.spawn(function()
                 return
             end
 
+            CraftState.Status = "Waiting for Golden position replication..."
+            task.wait(0.5)
+            local primaryRoot = select(1, getCharacterRootParts())
+            if not primaryRoot or not getGoldenBoundsPosition(machine, primaryRoot) then
+                CraftState.Status = "Golden position not replicated inside interaction bounds"
+                return
+            end
+
+            CraftState.RequestId = CraftState.RequestId + 1
+            CraftState.PendingRequestId = CraftState.RequestId
             CraftState.isRequestPending = true
             CraftState.Status = "Sending Golden craft request for " .. selectedName .. "..."
             local fired, fireError = pcall(function()
@@ -796,8 +839,9 @@ task.spawn(function()
                 return
             end
 
+            local requestId = CraftState.PendingRequestId
             task.delay(8, function()
-                if CraftState.isRequestPending then
+                if CraftState.isRequestPending and CraftState.PendingRequestId == requestId then
                     CraftState.isRequestPending = false
                     CraftState.lastCraftResultTime = os.clock()
                     CraftState.Status = "No Golden craft response from server"
