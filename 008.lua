@@ -1,4 +1,4 @@
-assert(game.PlaceId == 72858262610964, "Open Tap Simulator REBORN before running Silence")
+assert(game.PlaceId == 72858262610964, "Open Tap Simulator REBORN before running this script")
 
 local services = {
     Players = game:GetService("Players"),
@@ -12,9 +12,9 @@ local services = {
     Lighting = game:GetService("Lighting")
 }
 
-if _G.SilenceTapRebornRuntime then _G.SilenceTapRebornRuntime:Destroy() end
+if _G.TapSimulatorRebornRuntime then _G.TapSimulatorRebornRuntime:Destroy() end
 local runtime = {Alive = true, Threads = {}, Connections = {}, Cleanups = {}}
-_G.SilenceTapRebornRuntime = runtime
+_G.TapSimulatorRebornRuntime = runtime
 
 function runtime:Spawn(callback)
     if not self.Alive then return end
@@ -22,7 +22,7 @@ function runtime:Spawn(callback)
     thread = coroutine.create(function()
         local success, result = pcall(callback)
         self.Threads[thread] = nil
-        if not success then warn("[Silence Reborn] " .. tostring(result)) end
+        if not success then warn("[Tap Simulator REBORN] " .. tostring(result)) end
     end)
     self.Threads[thread] = true
     task.spawn(thread)
@@ -47,25 +47,24 @@ function runtime:Destroy()
     for thread in pairs(self.Threads) do if thread ~= coroutine.running() then pcall(task.cancel, thread) end end
     table.clear(self.Connections)
     table.clear(self.Threads)
-    if _G.SilenceTapRebornRuntime == self then _G.SilenceTapRebornRuntime = nil end
+    if _G.TapSimulatorRebornRuntime == self then _G.TapSimulatorRebornRuntime = nil end
 end
 
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 local window = Rayfield:CreateWindow({
-    name = "Silence | Tap Simulator REBORN",
+    name = "[✨] Tap Simulator REBORN",
     theme = "ember",
     sidebarLayout = true,
-    profile = "Tap Simulator REBORN",
-    showName = "Silence",
+    profile = "by Ovei",
+    showName = "Ovei",
     showIconOnly = false,
     configuration = {
         autoSave = true,
         autoLoad = true,
-        fileName = "SilenceTapSimulatorReborn",
-        customFolder = "SilenceTapSimulatorReborn_" .. tostring(services.Players.LocalPlayer.UserId)
+        fileName = "TapSimulatorReborn",
+        customFolder = "TapSimulatorReborn_" .. tostring(services.Players.LocalPlayer.UserId)
     }
 })
-window:CreateTag({text = "GEN2", color = Color3.fromRGB(190, 75, 65), order = 1})
 runtime:AddCleanup(function()
     if not window.unloaded then window:Unload() end
 end)
@@ -76,6 +75,8 @@ local utils = {
     modules = {},
     jobs = {},
     controls = {},
+    status = {},
+    activityTimes = {},
     next = {},
     travel = {Owner = nil, Origin = nil},
     hatch = {Sequence = 0, Pending = {}, Count = 0, Errors = 0, NextAt = 0},
@@ -175,6 +176,37 @@ function utils.remote(group, name, ...)
     return result
 end
 
+utils.activityConsole = tabs.main:CreateConsole({
+    name = "Live activity",
+    text = "Ready. Feature updates will appear here.",
+    height = 138,
+    follow = true,
+    maxLines = 60
+})
+
+function utils.message(key, value)
+    local status = tostring(value or "Idle")
+    local previous = utils.status[key]
+    local now = os.clock()
+    utils.status[key] = status
+    if not runtime.Alive or not utils.activityConsole then return end
+    local last = utils.activityTimes[key] or 0
+    if now - last < 0.5 then return end
+    if previous == status and now - last < 2 then return end
+    utils.activityTimes[key] = now
+    pcall(function()
+        utils.activityConsole:Append("[" .. os.date("%H:%M:%S") .. "] " .. tostring(key) .. ": " .. status)
+    end)
+end
+
+function utils.label(tab, key)
+    utils.status[key] = "Off"
+end
+
+function utils.section(tab, text)
+    tab:CreateSection({name = text})
+end
+
 function utils.job(tab, text, key, interval, callback, cleanup)
     utils.jobs[key] = {Enabled = false, Busy = false, Generation = 0, Callback = callback, Next = 0, Interval = interval, Cleanup = cleanup}
     utils.controls[key .. "Switch"] = tab:CreateToggle({
@@ -186,6 +218,7 @@ function utils.job(tab, text, key, interval, callback, cleanup)
             job.Generation += 1
             job.Enabled, job.Next = enabled, 0
             if not enabled and cleanup then pcall(cleanup) end
+            utils.message(key, enabled and "Waiting" or "Off")
         end
     })
 end
@@ -196,6 +229,7 @@ function utils.action(tab, text, key, callback)
         runtime:Spawn(function()
             local success, result = pcall(callback)
             utils.identityReset()
+            utils.message(key, success and (result or "Requested") or result)
             if not success then notify(text, result, 4) end
         end)
     end})
@@ -353,7 +387,6 @@ end
 
 function utils.tap()
     if utils.syncTapCounter then
-
         local sequence = utils.modules.tapController:GetManualTapCount() + 1
         debug.setupvalue(utils.tapCounter, 1, sequence)
         utils.remote("Tap", "TapRequested", {Auto = false, Source = "button", ClientSequence = sequence})
@@ -834,6 +867,7 @@ function utils.memoryGame()
             for index, card in ipairs(state.Cards) do if card.Pet then utils.memory.Known[index] = card.Pet end end
             first = first and nil or choice
             if (state.UnlockAt or 0) > 0 then first = nil end
+            utils.message("Memory", tostring(state.Pairs or 0) .. "/6 pairs")
         end
         if state.Outcome ~= "Playing" then utils.memory.Id = nil end
         return state.Outcome or "Paused"
@@ -862,6 +896,7 @@ function utils.digGame()
             while runtime.Alive and utils.jobs.Dig.Enabled and workspace:GetServerTimeNow() < target do task.wait(0.01) end
             if not utils.jobs.Dig.Enabled then break end
             state = utils.remote("Dig", "Hit", state.Id, round.Sequence, target)
+            utils.message("Dig", state.Complete and "Complete" or "Digging")
         end
         if state and state.Complete then return "Complete" end
         pcall(utils.remote, "Dig", "Cancel")
@@ -1136,9 +1171,11 @@ utils.bind("Egg", "EggHatchResult", function(packet)
     if packet.Success then
         utils.hatch.NextAt = math.max(os.clock() + 0.2, sentAt + math.max(0.5, 3.5 / (tonumber(packet.Speed) or 1)))
         utils.hatch.Count += #(packet.Pets or {})
+        utils.message("Hatch", packet.Egg .. " | " .. utils.formatNumber(utils.hatch.Count) .. " pets")
     else
         utils.hatch.NextAt = os.clock() + 4
         utils.hatch.Errors += 1
+        utils.message("Hatch", packet.Error or packet.Reason or "Rejected")
     end
 end)
 utils.bind("Colosseum", "WaveDefenseOpponentSpawned", function(packet)
@@ -1149,11 +1186,18 @@ utils.bind("Colosseum", "WaveDefenseOpponentDefeated", function(packet)
 end)
 utils.bind("Colosseum", "WaveDefenseWaveStarting", function(packet)
     utils.arena.Wave = type(packet) == "table" and (packet.Wave or packet.WaveNumber or 0) or tonumber(packet) or 0
+    utils.message("Arena", "Wave " .. tostring(utils.arena.Wave))
 end)
 utils.bind("Colosseum", "WaveDefenseGameOver", function() utils.arena.Active = false end)
 utils.bind("LuckyDucky", "Spawn", function(packet)
     if utils.jobs.Rewards and utils.jobs.Rewards.Enabled and packet and packet.Id then pcall(utils.remote, "LuckyDucky", "Claim", packet.Id) end
 end)
+for _, group in ipairs({"Machine", "Pet", "Rebirth", "Island"}) do
+    local event = ({Machine = "MachineCraftResult", Pet = "PetActionResult", Rebirth = "RebirthResult", Island = "IslandUnlockResult"})[group]
+    utils.bind(group, event, function(packet)
+        if type(packet) == "table" and (packet.Success == false or packet.Error) then utils.message(group, packet.Error or packet.Reason or "Rejected") end
+    end)
+end
 
 utils.load("chests", "Shared.Game.TapChestConfig")
 function utils.chestModel(id)
@@ -1360,7 +1404,6 @@ function utils.hideHatch(enabled)
         table.insert(state.Hooks, {Module = module, Name = name, Original = module[name], Replacement = callback})
         module[name] = callback
     end
-
     replace(utils.modules.hatchRenderer, "Play", function(self, egg, packet, done)
         if type(done) == "function" then task.defer(done) end
     end)
@@ -1374,8 +1417,10 @@ function utils.hideHatch(enabled)
     utils.setting("HatchAnimation", 3)
 end
 
+utils.section(tabs.main, "Clicking")
 utils.job(tabs.main, "Auto Tap", "Tap", utils.modules.gameConfig.ManualTapInterval, utils.tap)
 utils.controls.HideClicks = tabs.main:CreateToggle({name = "Hide Clicks", value = false, flag = "Visual.HideTaps", callback = utils.hideClicks})
+utils.section(tabs.main, "Rebirths")
 tabs.main.rebirthValues, tabs.main.rebirthMap = {"Max"}, {}
 function utils.refreshRebirths()
     local values, map = {"Max"}, {}
@@ -1395,13 +1440,17 @@ tabs.main.rebirthDropdown = tabs.main:CreateDropdown({name = "Select Rebirth Amo
     end
 })
 utils.job(tabs.main, "Auto Rebirth", "Rebirth", 0.5, utils.rebirth)
+utils.section(tabs.main, "Progression")
 utils.job(tabs.main, "Auto Skill Tree", "Skills", 0.5, utils.skills)
 utils.job(tabs.main, "Auto Unlock Islands", "Islands", 5, utils.islands)
 utils.job(tabs.main, "Auto Claim Rewards", "Rewards", 20, utils.rewards)
 utils.job(tabs.main, "Auto Close Rewards", "RewardPopup", 0.3, utils.closeRewards)
 utils.job(tabs.main, "Auto Claim Chests", "Chests", 30, utils.chests)
+utils.label(tabs.main, "Rebirth")
+utils.section(tabs.main, "Performance")
 utils.action(tabs.main, "Anti Lag", "Performance", utils.antiLag)
-
+utils.label(tabs.main, "Performance")
+utils.section(tabs.hatching, "Hatching")
 utils.eggNames, utils.eggMap = {}, {}
 for _, egg in ipairs(utils.sortedEggs()) do
     local label = egg.Name .. " - " .. utils.formatNumber(egg.Price)
@@ -1425,6 +1474,8 @@ tabs.hatching:CreateDropdown({name = "Hatch Amount", options = {"1x", "3x", "8x"
 utils.settings.farm.HatchCount = 8
 utils.job(tabs.hatching, "Auto Hatch", "Hatch", 0.2, utils.hatchEgg)
 tabs.hatching:CreateToggle({name = "Hide Hatch Animation", value = false, flag = "Visual.HideHatch", callback = utils.hideHatch})
+utils.label(tabs.hatching, "Hatch")
+utils.section(tabs.hatching, "Egg Auto Delete")
 local eggDeleteValues, eggDeleteSelected = utils.refreshEggDelete()
 tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Select Pets to Delete", options = eggDeleteValues, value = eggDeleteSelected, multiSelect = true,
     callback = function(values)
@@ -1443,11 +1494,12 @@ tabs.hatching.deleteDropdown = tabs.hatching:CreateDropdown({name = "Select Pets
 tabs.hatching.rarityDropdown = tabs.hatching:CreateDropdown({name = "Select Rarities to Delete", options = utils.rarities or {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}, value = tabs.hatching.deleteRarities, multiSelect = true,
     callback = utils.deleteEggRarities
 })
-
+utils.section(tabs.pets, "Team")
 utils.dropdown(tabs.pets, "Select Team Focus", utils.settings.pets, "Team", {"Clicks", "Gems", "Luck"}, "Pets.Team")
 utils.job(tabs.pets, "Auto Equip Best", "Team", 10, utils.equip)
 utils.action(tabs.pets, "Equip Best", "Team", utils.equip)
 utils.job(tabs.pets, "Auto Feed Treats", "Treats", 10, utils.feed)
+utils.section(tabs.pets, "Auto Delete")
 utils.rarities = {"Common", "Rare", "Epic", "Legendary", "Mythical", "Secret I", "Secret II", "Secret III", "Secret X"}
 local deleteRarities = table.clone(utils.rarities)
 table.insert(deleteRarities, 1, "All Rarities")
@@ -1460,7 +1512,7 @@ tabs.pets.deleteNames = tabs.pets:CreateDropdown({name = "Select Pets", options 
     end
 })
 utils.job(tabs.pets, "Auto Delete Pets", "Cleanup", 15, utils.sellPets)
-
+utils.label(tabs.pets, "Cleanup")
 tabs.crafting.petDropdowns = {}
 function utils.petNames(tier)
     local names = {}
@@ -1472,6 +1524,7 @@ function utils.petNames(tier)
 end
 for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Golden"}, {"Rainbow", "Shiny", "Diamond"}}) do
     local title, machine, tier = row[1], row[2], row[3]
+    utils.section(tabs.crafting, title .. " Pets")
     if machine == "Shiny" then
         tabs.crafting:CreateDropdown({name = "Select Time", options = {"5h - 2 Pets", "2.5h - 3 Pets", "1h - 4 Pets", "30s - 5 Pets"}, value = "30s - 5 Pets", flag = "Craft.RainbowAmount",
             callback = function(value) value = selectedOne(value); utils.settings.pets.RainbowCount = tonumber(value:match("(%d+) Pets")) or 5 end})
@@ -1487,9 +1540,10 @@ for _, row in ipairs({{"Golden", "Golden", "Normal"}, {"Diamond", "Diamond", "Go
     end
     tabs.crafting.petDropdowns[tier] = utils.multi(tabs.crafting, "Select " .. title .. " Pets", utils.settings.pets, title .. "Pets", utils.petNames(tier), "Craft." .. title .. "Pets")
     utils.job(tabs.crafting, "Auto Craft " .. title, machine, 8, function() return utils.craft(machine) end)
+    utils.label(tabs.crafting, machine)
 end
 utils.job(tabs.crafting, "Auto Collect Shiny Stars", "Stars", 5, utils.collectStars)
-
+utils.section(tabs.enchanting, "Enchanting")
 utils.multi(tabs.enchanting, "Select Enchants", utils.settings.enchant, "Traits", utils.keys(utils.modules.enchants.Enchants), "Enchant.Traits")
 function utils.enchantPets()
     local catalog = {}
@@ -1540,7 +1594,8 @@ end
 tabs.enchanting.petDropdown = tabs.enchanting:CreateDropdown({name = "Select Pets", options = utils.enchantPets(), value = {"Equipped Pets"}, multiSelect = true, flag = "Enchant.Pets",
     callback = utils.selectEnchantPets})
 utils.job(tabs.enchanting, "Auto Enchant", "Enchant", 2, utils.enchant)
-
+utils.label(tabs.enchanting, "Enchant")
+utils.section(tabs.teleport, "Islands")
 utils.settings.destination = {Island = "Spawn", OnJoin = false}
 utils.islandNames = {"Spawn"}
 for _, island in ipairs(utils.sortedIslands()) do table.insert(utils.islandNames, island.Name) end
@@ -1555,13 +1610,18 @@ tabs.teleport:CreateToggle({name = "Teleport on Join", value = false, flag = "Tr
     utils.settings.destination.OnJoin = enabled
     if enabled then runtime:Spawn(function() task.wait(1); if runtime.Alive and utils.settings.destination.OnJoin then pcall(utils.teleport) end end) end
 end})
-
+utils.label(tabs.teleport, "Travel")
+utils.section(tabs.misc, "Minigames")
 utils.job(tabs.misc, "Auto Colosseum", "Arena", 20, utils.colosseum, function()
     if utils.arena.Active then pcall(utils.remote, "Colosseum", "EndWaveDefense") end
     utils.arena.Active = false
 end)
 utils.job(tabs.misc, "Auto Memory Match", "Memory", 20, utils.memoryGame)
 utils.job(tabs.misc, "Auto Dig", "Dig", 20, utils.digGame)
+utils.label(tabs.misc, "Arena")
+utils.label(tabs.misc, "Memory")
+utils.label(tabs.misc, "Dig")
+utils.section(tabs.misc, "Potions")
 utils.multi(tabs.misc, "Select Potion Types", utils.settings.boosts, "Types", {"Coins", "Gems", "Luck", "OctoHatch", "GoldenHatch", "EnchantAnimSpeed"}, "Boosts.Types")
 utils.job(tabs.misc, "Auto Use Potions", "Boosts", 15, utils.potions)
 utils.dropdown(tabs.misc, "Select Potion", utils.settings.boosts, "Brew", utils.modules.brew.Potions, "Boosts.Brew")
@@ -1573,6 +1633,7 @@ utils.action(tabs.misc, "Buy Potions", "Potions", function()
         return "Purchased"
     end)
 end)
+utils.section(tabs.misc, "Boosts")
 utils.dropdown(tabs.misc, "Select Blessing", utils.settings.boosts, "Shrine", {"Luck", "Golden", "AutoClicker"}, "Boosts.Shrine")
 utils.job(tabs.misc, "Auto Shrine", "Shrine", 30, utils.shrine)
 utils.job(tabs.misc, "Auto Totems", "Totems", 30, utils.totems)
@@ -1580,7 +1641,6 @@ utils.relicNames = {"Automatic"}
 for _, name in ipairs(utils.modules.relics.Order) do table.insert(utils.relicNames, name) end
 utils.dropdown(tabs.misc, "Select Relic", utils.settings.boosts, "Relic", utils.relicNames, "Boosts.Relic")
 utils.job(tabs.misc, "Auto Relic", "Relic", 20, utils.relic)
-
 utils.settings.config = {Name = "Default"}
 function utils.configName()
     local name = tostring(utils.settings.config.Name or ""):match("^%s*(.-)%s*$")
@@ -1625,11 +1685,13 @@ utils.action(tabs.config, "Stop All Automations", "Session", function()
     utils.stop()
     return "All automations stopped"
 end)
-utils.action(tabs.config, "Unload Silence", "Session", function()
+utils.action(tabs.config, "Unload Script", "Session", function()
     runtime:Destroy()
     return "Unloaded"
 end)
-window:Toast({title = "Silence loaded", duration = 4})
+utils.label(tabs.config, "Configuration")
+
+window:Toast({title = "[✨] Tap Simulator REBORN", subtitle = "by Ovei", duration = 4})
 
 runtime:Connect(utils.player.Idled, function()
     pcall(function()
@@ -1660,6 +1722,7 @@ runtime:Spawn(function()
             deadline = deadline or os.clock()
             local success, result = pcall(job.Callback)
             utils.identityReset()
+            if not success then utils.message("Tap", result) end
             deadline += job.Interval
             if deadline < os.clock() then deadline = os.clock() + job.Interval end
             task.wait(math.max(0, deadline - os.clock()))
@@ -1680,6 +1743,7 @@ runtime:Spawn(function()
                     utils.identityReset()
                     job.Busy = false
                     job.Next = os.clock() + math.max(0.1, job.Interval)
+                    if job.Enabled then utils.message(key, success and (result or "Active") or result) end
                 end)
             end
         end
