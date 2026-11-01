@@ -30,7 +30,11 @@ function runtime:Spawn(callback)
 end
 
 function runtime:Connect(signal, callback)
-    local connection = signal:Connect(function(...) if self.Alive then callback(...) end end)
+    local connection = signal:Connect(function(...)
+        if not self.Alive then return end
+        local success, result = pcall(callback, ...)
+        if not success then warn("[Tap Simulator REBORN] Event: " .. tostring(result)) end
+    end)
     table.insert(self.Connections, connection)
     return connection
 end
@@ -47,6 +51,7 @@ function runtime:Destroy()
     for thread in pairs(self.Threads) do if thread ~= coroutine.running() then pcall(task.cancel, thread) end end
     table.clear(self.Connections)
     table.clear(self.Threads)
+    table.clear(self.Cleanups)
     if _G.TapSimulatorRebornRuntime == self then _G.TapSimulatorRebornRuntime = nil end
 end
 
@@ -65,7 +70,7 @@ local window = Rayfield:CreateWindow({
         customFolder = "TapSimulatorReborn_" .. tostring(services.Players.LocalPlayer.UserId)
     }
 })
-window:ChangeTheme({LiveAnimation = false})
+pcall(function() window:ChangeTheme({LiveAnimation = false}) end)
 runtime:AddCleanup(function()
     if not window.unloaded then window:Unload() end
 end)
@@ -78,6 +83,7 @@ local utils = {
     controls = {},
     status = {},
     activityTimes = {},
+    actionBusy = {},
     next = {},
     travel = {Owner = nil, Origin = nil},
     hatch = {Sequence = 0, Pending = {}, Count = 0, Errors = 0, NextAt = 0},
@@ -106,7 +112,6 @@ tabs.enchanting = window:CreateTab({name = "Enchanting"})
 tabs.teleport = window:CreateTab({name = "Travel"})
 tabs.misc = window:CreateTab({name = "Tools"})
 
-tabs.config = window:CreateTab({name = "Settings"})
 
 local function selectedList(value)
     if type(value) == "table" then return value end
@@ -182,7 +187,7 @@ utils.activityConsole = tabs.main:CreateConsole({
     text = "Waiting for activity...",
     height = 138,
     follow = true,
-    maxLines = 60
+    maxLines = 40
 })
 
 local activityNames = {
@@ -212,8 +217,8 @@ local activityNames = {
     Shrine = "Shrine Blessing",
     Totems = "Totems",
     Relic = "Relics",
-    Configuration = "Profiles",
-    Theme = "Theme"
+    SessionStop = "Hub Controls",
+    SessionUnload = "Hub Controls"
 }
 
 function utils.message(key, value)
@@ -223,7 +228,7 @@ function utils.message(key, value)
     utils.status[key] = status
     if not runtime.Alive or not utils.activityConsole then return end
     local last = utils.activityTimes[key] or 0
-    if now - last < 0.5 then return end
+    if now - last < 0.75 then return end
     if previous == status and now - last < 2 then return end
     utils.activityTimes[key] = now
     pcall(function()
@@ -257,10 +262,14 @@ end
 
 function utils.action(tab, text, key, callback)
     return tab:CreateButton({name = text, callback = function()
+        if not runtime.Alive or utils.actionBusy[key] then return end
         if utils.jobs[key] and utils.jobs[key].Busy then return end
+        utils.actionBusy[key] = true
         runtime:Spawn(function()
             local success, result = pcall(callback)
+            utils.actionBusy[key] = nil
             utils.identityReset()
+            if not runtime.Alive then return end
             utils.message(key, success and (result or "Requested") or result)
             if not success then notify(text, result, 4) end
         end)
@@ -1673,85 +1682,15 @@ utils.relicNames = {"Automatic"}
 for _, name in ipairs(utils.modules.relics.Order) do table.insert(utils.relicNames, name) end
 utils.dropdown(tabs.misc, "Relic Selection", utils.settings.boosts, "Relic", utils.relicNames, "Boosts.Relic")
 utils.job(tabs.misc, "Auto Claim Relics", "Relic", 20, utils.relic)
-utils.settings.config = {Name = "Default"}
-function utils.configName()
-    local name = tostring(utils.settings.config.Name or ""):match("^%s*(.-)%s*$")
-    assert(type(name) == "string" and #name > 0 and #name <= 48 and name:match("^[%w _%-]+$"), "Enter a valid configuration name")
-    return name
-end
-utils.section(tabs.config, "Profile Management")
-tabs.config:CreateInput({name = "Profile Name", value = "Default", placeholder = "Enter a profile name", flag = "Config.Name", callback = function(value)
-    utils.settings.config.Name = value
-end})
-utils.action(tabs.config, "Save Profile", "Configuration", function()
-    local name = utils.configName()
-    local success = window:Save(name)
-    assert(success, "Rayfield could not save this configuration in the current environment")
-    return "Saved " .. name
-end)
-utils.action(tabs.config, "Load Profile", "Configuration", function()
-    local name = utils.configName()
-    local success = window:Load(name)
-    assert(success, "Configuration not found or loading is unavailable")
-    return "Loaded " .. name
-end)
-utils.action(tabs.config, "Delete Profile", "Configuration", function()
-    local name = utils.configName()
-    local success = window:DeleteConfig(name)
-    assert(success, "Could not delete configuration " .. name)
-    return "Deleted " .. name
-end)
-utils.action(tabs.config, "Browse Profiles", "Configuration", function()
-    local names = window:ListConfigs() or {}
-    table.sort(names)
-    local content = #names > 0 and table.concat(names, ", ") or "No saved configurations found."
-    notify("Saved profiles", content, 6)
-    return tostring(#names) .. " configuration(s)"
-end)
-utils.section(tabs.config, "Appearance")
-local themeOptions = {"default", "cobalt", "ember", "amethyst", "frost", "rose"}
-local themeState = {
-    Selected = "ember",
-    Active = "ember",
-    LastAppliedAt = -math.huge,
-    Applying = false
-}
-tabs.config:CreateDropdown({name = "Theme Preset", options = themeOptions, value = themeState.Selected, forgetState = true,
-    callback = function(value)
-        local themeName = selectedOne(value)
-        if type(themeName) == "string" and table.find(themeOptions, themeName) then
-            themeState.Selected = themeName
-        end
-    end
-})
-utils.action(tabs.config, "Apply Theme", "Theme", function()
-    local themeName = themeState.Selected
-    assert(table.find(themeOptions, themeName), "Select a valid theme preset")
-    if themeName == themeState.Active then return themeName .. " is already active" end
-    if themeState.Applying then return "A theme change is already running" end
-    local now = os.clock()
-    if now - themeState.LastAppliedAt < 2 then return "Wait before applying another theme" end
-    themeState.Applying = true
-    local success, result = pcall(function()
-        window:ChangeTheme(themeName)
-        window:ChangeTheme({LiveAnimation = false})
-    end)
-    themeState.Applying = false
-    if not success then error(result) end
-    themeState.Active = themeName
-    themeState.LastAppliedAt = os.clock()
-    return "Applied " .. themeName
-end)
-utils.section(tabs.config, "Session Controls")
-utils.action(tabs.config, "Stop All Tasks", "Session", function()
+utils.section(tabs.main, "Hub Controls")
+utils.action(tabs.main, "Stop All Tasks", "SessionStop", function()
     utils.stop()
     return "All automations stopped"
 end)
-utils.action(tabs.config, "Unload Hub", "Session", function()
+utils.action(tabs.main, "Unload Hub", "SessionUnload", function()
     runtime:Destroy()
     return "Unloaded"
 end)
-utils.label(tabs.config, "Profiles")
 
 window:Toast({title = "[✨] Tap Simulator REBORN", subtitle = "by Ovei", duration = 4})
 
