@@ -146,38 +146,6 @@ end
 -- EggController uses a strict proximity threshold when selecting an egg.
 -- This helper verifies against that tighter range instead of TeleportTo's
 -- generic 10/15-stud tolerance.
-local function TeleportToRange(targetPos, maxDistance)
-    if typeof(targetPos) ~= "Vector3" then return false end
-    maxDistance = tonumber(maxDistance) or 8.5
-
-    for attempt = 1, 3 do
-        local char = LocalPlayer.Character
-        if not char then return false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return false end
-        if (hrp.Position - targetPos).Magnitude <= maxDistance then return true end
-
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
-        hrp.Anchored = true
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        for _ = 1, 5 do
-            hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 1.5, 0))
-            task.wait(0.05)
-        end
-        hrp.Anchored = false
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
-        task.wait(0.25)
-
-        hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp and (hrp.Position - targetPos).Magnitude <= maxDistance then
-            return true
-        end
-    end
-    return false
-end
-
 local function getObjectBounds(obj)
     if not obj then return nil, nil end
     if obj:IsA("BasePart") then
@@ -191,54 +159,6 @@ local function getObjectBounds(obj)
         if ok and cf and size then return cf, size end
     end
     return nil, nil
-end
-
-local function isInsideObjectBounds(obj, worldPosition)
-    local boundsCFrame, boundsSize = getObjectBounds(obj)
-    if not boundsCFrame or not boundsSize then return false end
-    local localPosition = boundsCFrame:PointToObjectSpace(worldPosition)
-    local half = boundsSize / 2
-    return math.abs(localPosition.X) <= half.X
-        and math.abs(localPosition.Y) <= half.Y
-        and math.abs(localPosition.Z) <= half.Z
-end
-
--- The Golden Machine's interaction detector checks the tagged object's actual
--- bounding box, not a generic distance from its first child part.
-local function TeleportIntoInteractionPoint(interactionPoint)
-    local boundsCFrame, boundsSize = getObjectBounds(interactionPoint)
-    if not boundsCFrame or not boundsSize then return false end
-
-    local verticalOffset = math.min(0.75, math.max(0, boundsSize.Y * 0.2))
-    local destination = boundsCFrame:PointToWorldSpace(Vector3.new(0, verticalOffset, 0))
-
-    for attempt = 1, 3 do
-        local char = LocalPlayer.Character
-        if not char then return false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return false end
-
-        if isInsideObjectBounds(interactionPoint, hrp.Position) then return true end
-
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
-        hrp.Anchored = true
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-        for _ = 1, 4 do
-            hrp.CFrame = CFrame.new(destination)
-            task.wait(0.05)
-        end
-        hrp.Anchored = false
-        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
-        task.wait(0.2)
-
-        hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp and isInsideObjectBounds(interactionPoint, hrp.Position) then
-            return true
-        end
-    end
-    return false
 end
 
 local TapState = { Running = false, Seq = 0, Delay = 0.01, Count = 0 }
@@ -432,6 +352,7 @@ local HatchState = {
     HatchDelay = 0.5,
     isRequestPending = false,
     lastHatchResultTime = 0,
+    Seq = 0, PendingAmount = 1,
     Hatched = 0, Status = "Idle",
 }
 
@@ -440,33 +361,35 @@ EggService.EggHatchResult:Connect(function(result)
     HatchState.lastHatchResultTime = os.clock()
 
     if type(result) == "table" and result.Success == true then
-        HatchState.Hatched = HatchState.Hatched + 1
-        HatchState.Status = "Hatched | total " .. HatchState.Hatched
+        local amount = tonumber(result.Count) or HatchState.PendingAmount or 1
+        HatchState.Hatched = HatchState.Hatched + amount
+        HatchState.Status = "Hatch successful | total " .. HatchState.Hatched
     elseif type(result) == "table" and result.Error then
-        HatchState.Status = "Hatch failed: " .. tostring(result.Error)
+        HatchState.Status = "Hatch rejected: " .. tostring(result.Error)
     else
-        HatchState.Status = "Hatch request completed"
+        HatchState.Status = "Hatch result received"
     end
 end)
 
 local function getEggModel(eggName)
     local eggsFolder = Workspace:FindFirstChild("Eggs")
     if not eggsFolder then return nil end
-    return eggsFolder:FindFirstChild(eggName)
+    local model = eggsFolder:FindFirstChild(eggName)
+    if model and model:IsA("Model") then return model end
+    return nil
 end
 
 local function getEggPos(eggName)
     local eggModel = getEggModel(eggName)
     if not eggModel then return nil end
 
-    -- EggController uses EggIdleAnimation.GetPosition for its proximity test.
+    -- The game's EggController checks EggIdleAnimation.GetPosition(model),
+    -- falling back to the part returned by its own Egg-part resolver.
     if EggIdleAnimation and type(EggIdleAnimation.GetPosition) == "function" then
         local ok, position = pcall(EggIdleAnimation.GetPosition, eggModel)
         if ok and typeof(position) == "Vector3" then return position end
     end
 
-    -- Match EggController's fallback: prefer the part under the "Egg" child,
-    -- then that child's PrimaryPart/first BasePart, then the outer model root.
     local eggRoot = eggModel:FindFirstChild("Egg")
     if eggRoot and eggRoot:IsA("BasePart") then
         return eggRoot.Position
@@ -474,70 +397,149 @@ local function getEggPos(eggName)
         local rootPart = eggRoot.PrimaryPart or eggRoot:FindFirstChildWhichIsA("BasePart", true)
         if rootPart then return rootPart.Position end
     end
+
     local rootPart = eggModel.PrimaryPart or eggModel:FindFirstChildWhichIsA("BasePart", true)
-    if rootPart then return rootPart.Position end
-    return nil
+    return rootPart and rootPart.Position or nil
+end
+
+local function getCharacterRoot()
+    local char = LocalPlayer.Character
+    if not char then return nil, nil end
+    local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    return root, hrp
+end
+
+-- The client egg selector uses the animated egg position and a 10-stud
+-- threshold (12 studs for the special 30M Visits egg). Keep a safety margin.
+local function TeleportToRange(targetPos, maxDistance)
+    if typeof(targetPos) ~= "Vector3" then return false, "invalid egg position" end
+    maxDistance = tonumber(maxDistance) or 8.5
+
+    for attempt = 1, 4 do
+        local root, hrp = getCharacterRoot()
+        if not root or not hrp then return false, "character root missing" end
+
+        if (root.Position - targetPos).Magnitude <= maxDistance then
+            return true
+        end
+
+        local destination = targetPos + Vector3.new(0, 2.5, 0)
+        local rotation = hrp.CFrame - hrp.Position
+        hrp.CFrame = CFrame.new(destination) * rotation
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.2)
+
+        root = select(1, getCharacterRoot())
+        if root and (root.Position - targetPos).Magnitude <= maxDistance then
+            return true
+        end
+    end
+
+    return false, "teleport did not reach the egg"
 end
 
 task.spawn(function()
     while true do
-        task.wait(0.1)
-        if HatchState.isRequestPending or not HatchState.HatchRunning then continue end
-        local data = getData()
-        if not data then continue end
-        if os.clock() - HatchState.lastHatchResultTime < HatchState.HatchDelay then continue end
-        local invCount = 0
-        for _ in pairs((data.Pets and data.Pets.Owned) or {}) do invCount = invCount + 1 end
-        local limit = (data.Pets and data.Pets.StorageLimit) or math.huge
-        if invCount >= limit then continue end
-        if not HatchState.SelectedEgg or not EggConfig[HatchState.SelectedEgg] then continue end
-        local price = EggPricing.GetTotal(data, HatchState.SelectedEgg, EggConfig[HatchState.SelectedEgg].Price, HatchState.SelectedAmount)
-        local coins = (data.Currencies and data.Currencies.Coins) or 0
-        if not (price and coins >= price) then continue end
-        if HatchState.SelectedAmount == 8 then
-            local hasPerk = GamepassPerks.Has(data, "x8Egg")
-            local hasBoost = BoostFormula.HasType(data, "OctoHatch")
-            if not hasPerk and not hasBoost then
-                HatchState.Status = "x8 Gamepass required"
-                continue
+        task.wait(0.15)
+        if not HatchState.HatchRunning then continue end
+
+        local ok, err = pcall(function()
+            if HatchState.isRequestPending then return end
+            if os.clock() - HatchState.lastHatchResultTime < HatchState.HatchDelay then return end
+
+            local data = getData()
+            if not data then
+                HatchState.Status = "Waiting for player data"
+                return
             end
-        end
-        local pos = getEggPos(HatchState.SelectedEgg)
-        if not pos then
-            HatchState.Status = "Egg not loaded"
-            task.wait(0.5)
-            continue
-        end
 
-        -- EggController only recognizes an egg inside its 10-stud proximity
-        -- range. Aim for 8 studs to leave room for character movement/physics.
-        if not TeleportToRange(pos, 8.5) then
-            HatchState.Status = "Could not reach egg"
-            task.wait(0.5)
-            continue
-        end
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp or (hrp.Position - pos).Magnitude >= 9 then
-            HatchState.Status = "Outside egg range"
-            task.wait(0.5)
-            continue
-        end
+            local petsData = data.Pets or {}
+            local ownedPets = petsData.Owned or {}
+            local invCount = 0
+            for _ in pairs(ownedPets) do invCount = invCount + 1 end
+            local limit = petsData.StorageLimit or math.huge
+            if invCount >= limit then
+                HatchState.Status = "Pet storage full"
+                return
+            end
 
-        HatchState.isRequestPending = true
-        HatchState.Status = "Waiting for hatch result..."
-        EggService.EggHatchRequested:Fire({
-            Egg = HatchState.SelectedEgg,
-            Count = HatchState.SelectedAmount,
-            Auto = true,
-            Seq = math.random(1, 100000),
-        })
-        task.delay(12, function()
-            if HatchState.isRequestPending then
+            local eggName = HatchState.SelectedEgg
+            if not eggName or not EggConfig[eggName] then
+                HatchState.Status = "Select a valid egg"
+                return
+            end
+
+            local amount = HatchState.SelectedAmount or 1
+            local price = EggPricing.GetTotal(data, eggName, EggConfig[eggName].Price, amount)
+            local coins = (data.Currencies and data.Currencies.Coins) or 0
+            if not price then
+                HatchState.Status = "Could not calculate egg price"
+                return
+            end
+            if coins < price then
+                HatchState.Status = string.format("Not enough coins (%s / %s)", tostring(coins), tostring(price))
+                return
+            end
+
+            if amount == 8 then
+                local hasPerk = GamepassPerks.Has(data, "x8Egg")
+                local hasBoost = BoostFormula.HasType(data, "OctoHatch")
+                if not hasPerk and not hasBoost then
+                    HatchState.Status = "x8 Hatch requires the perk"
+                    return
+                end
+            end
+
+            local eggModel = getEggModel(eggName)
+            local pos = eggModel and getEggPos(eggName) or nil
+            if not pos then
+                HatchState.Status = "Egg not spawned: " .. tostring(eggName)
+                return
+            end
+
+            HatchState.Status = "Teleporting to " .. eggName .. "..."
+            local reached, reason = TeleportToRange(pos, eggName == "30M Visits" and 10.5 or 8.5)
+            if not reached then
+                HatchState.Status = "Teleport failed: " .. tostring(reason)
+                return
+            end
+
+            -- Auto=true in the game's client is only sent when its own
+            -- built-in auto-hatch state is active for this egg. This script
+            -- runs its own loop, so send a normal single hatch request.
+            HatchState.Seq = HatchState.Seq + 1
+            HatchState.PendingAmount = amount
+            HatchState.isRequestPending = true
+            HatchState.Status = "Sending hatch request..."
+            local fired, fireError = pcall(function()
+                EggService.EggHatchRequested:Fire({
+                    Egg = eggName,
+                    Count = amount,
+                    Auto = false,
+                    Seq = HatchState.Seq,
+                })
+            end)
+            if not fired then
                 HatchState.isRequestPending = false
-                HatchState.Status = "Hatch timed out; retrying"
+                HatchState.Status = "Hatch remote error: " .. tostring(fireError)
+                return
             end
+
+            task.delay(12, function()
+                if HatchState.isRequestPending then
+                    HatchState.isRequestPending = false
+                    HatchState.Status = "No hatch response from server"
+                    HatchState.lastHatchResultTime = os.clock()
+                end
+            end)
         end)
+
+        if not ok then
+            HatchState.isRequestPending = false
+            HatchState.Status = "Auto hatch error: " .. tostring(err)
+        end
     end
 end)
 
@@ -616,6 +618,10 @@ local CraftState = {
 }
 
 MachineService.MachineCraftResult:Connect(function(result)
+    if type(result) == "table" and result.Machine and result.Machine ~= "Golden" then
+        return
+    end
+
     CraftState.isRequestPending = false
     CraftState.lastCraftResultTime = os.clock()
 
@@ -623,23 +629,76 @@ MachineService.MachineCraftResult:Connect(function(result)
         CraftState.GoldenCrafted = CraftState.GoldenCrafted + 1
         CraftState.Status = "Golden craft successful"
     elseif type(result) == "table" and result.Error then
-        CraftState.Status = "Golden craft failed: " .. tostring(result.Error)
+        CraftState.Status = "Golden craft rejected: " .. tostring(result.Error)
     else
         CraftState.Status = "Golden craft result received"
     end
 end)
 
 local function getGoldenMachineTarget()
-    local attributeFallback
-    for _, v in CollectionService:GetTagged("InteractionPoint") do
-        if v.Name == "Golden" then
-            return v
-        end
-        if v:GetAttribute("UpgradeName") == "Golden" then
-            attributeFallback = attributeFallback or v
+    -- The game's interaction controller maps the tag by Instance.Name.
+    -- Do not use an arbitrary UpgradeName fallback; it may not be recognized.
+    for _, point in ipairs(CollectionService:GetTagged("InteractionPoint")) do
+        if point.Name == "Golden" and (point:IsA("BasePart") or point:IsA("Model")) then
+            return point
         end
     end
-    return attributeFallback
+    return nil
+end
+
+local function getCharacterRootParts()
+    local char = LocalPlayer.Character
+    if not char then return nil, nil end
+    return char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"), char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getGoldenBoundsPosition(interactionPoint, worldPosition)
+    local boundsCFrame, boundsSize = getObjectBounds(interactionPoint)
+    if not boundsCFrame or not boundsSize then return false end
+
+    local localPosition = boundsCFrame:PointToObjectSpace(worldPosition)
+    local half = boundsSize / 2
+
+    -- Matches the game's InteractionPoint test: X/Z use the bounds, while
+    -- the vertical allowance is extended by 2 studs.
+    return math.abs(localPosition.X) <= half.X
+        and math.abs(localPosition.Y) <= half.Y + 2
+        and math.abs(localPosition.Z) <= half.Z
+end
+
+local function TeleportIntoInteractionPoint(interactionPoint)
+    local boundsCFrame, boundsSize = getObjectBounds(interactionPoint)
+    if not boundsCFrame or not boundsSize then
+        return false, "interaction point has no bounds"
+    end
+
+    -- Stand just above the top face. The game's proximity helper allows an
+    -- extra 2 studs vertically; teleporting to the model center can place the
+    -- avatar inside collidable geometry and get pushed back out.
+    local localTarget = Vector3.new(0, boundsSize.Y / 2 + 1, 0)
+    local destination = boundsCFrame:PointToWorldSpace(localTarget)
+
+    for attempt = 1, 4 do
+        local root, hrp = getCharacterRootParts()
+        if not root or not hrp then return false, "character root missing" end
+
+        if getGoldenBoundsPosition(interactionPoint, root.Position) then
+            return true
+        end
+
+        local rotation = hrp.CFrame - hrp.Position
+        hrp.CFrame = CFrame.new(destination) * rotation
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.2)
+
+        root = select(1, getCharacterRootParts())
+        if root and getGoldenBoundsPosition(interactionPoint, root.Position) then
+            return true
+        end
+    end
+
+    return false, "teleport did not enter the Golden interaction bounds"
 end
 
 local function petMatchesMutation(pet, mutation)
@@ -652,69 +711,103 @@ local function petMatchesMutation(pet, mutation)
     local mut = pet.Mutation
     if type(mut) == "string" then return mut == mutation end
     if type(mut) == "table" then
-        for _, m in pairs(mut) do if m == mutation then return true end end
+        for _, m in pairs(mut) do
+            if m == mutation then return true end
+        end
     end
     return false
 end
 
 task.spawn(function()
     while true do
-        task.wait(0.1)
-        if CraftState.isRequestPending or not CraftState.GoldenRunning then continue end
-        local data = getData()
-        if not data then continue end
-        if os.clock() - CraftState.lastCraftResultTime < 1 then continue end
-        local groups = {}
-        local owned = (data.Pets and data.Pets.Owned) or {}
-        for id, pet in pairs(owned) do
-            if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen and not pet.Enchant and not pet.Signature then
-                if petMatchesMutation(pet, CraftState.SelectedMutation) then
-                    if not groups[pet.Name] then groups[pet.Name] = {} end
-                    table.insert(groups[pet.Name], id)
-                end
+        task.wait(0.15)
+        if not CraftState.GoldenRunning then continue end
+
+        local ok, err = pcall(function()
+            if CraftState.isRequestPending then return end
+            if os.clock() - CraftState.lastCraftResultTime < 1 then return end
+
+            local data = getData()
+            if not data then
+                CraftState.Status = "Waiting for player data"
+                return
             end
-        end
-        for _, ids in pairs(groups) do
-            if #ids >= CraftState.PetsToUse then
-                local selected = {}
-                for i = 1, CraftState.PetsToUse do table.insert(selected, ids[i]) end
 
-                local machine = getGoldenMachineTarget()
-                if not machine then
-                    CraftState.Status = "Golden Machine interaction point not found"
-                    task.wait(0.75)
-                    break
-                end
-
-                -- The game's own InteractionPoint detector tests the player's
-                -- position against the tagged part/model bounding box. A generic
-                -- 10-15 stud distance check is not sufficient for this machine.
-                if not TeleportIntoInteractionPoint(machine) then
-                    CraftState.Status = "Could not enter Golden Machine range"
-                    task.wait(0.75)
-                    break
-                end
-
-                task.wait(0.2)
-                local char = LocalPlayer.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                if not hrp or not isInsideObjectBounds(machine, hrp.Position) then
-                    CraftState.Status = "Outside Golden Machine interaction area"
-                    task.wait(0.75)
-                    break
-                end
-
-                CraftState.isRequestPending = true
-                CraftState.Status = "Crafting Golden pets..."
-                MachineService.MachineCraftRequested:Fire({ Machine = "Golden", PetIds = selected })
-                task.delay(5, function()
-                    if CraftState.isRequestPending then
-                        CraftState.isRequestPending = false
-                        CraftState.Status = "Golden craft timed out; retrying"
+            local groups = {}
+            local owned = (data.Pets and data.Pets.Owned) or {}
+            local eligibleCount = 0
+            for id, pet in pairs(owned) do
+                if pet.Tier == "Normal" and not pet.Locked and not pet.Frozen
+                    and not pet.Enchant and not pet.Signature
+                    and petMatchesMutation(pet, CraftState.SelectedMutation) then
+                    eligibleCount = eligibleCount + 1
+                    if type(pet.Name) == "string" then
+                        groups[pet.Name] = groups[pet.Name] or {}
+                        table.insert(groups[pet.Name], id)
                     end
-                end)
-                break
+                end
             end
+
+            local selected
+            local selectedName
+            for petName, ids in pairs(groups) do
+                if #ids >= CraftState.PetsToUse then
+                    selected = {}
+                    selectedName = petName
+                    for i = 1, CraftState.PetsToUse do
+                        selected[i] = ids[i]
+                    end
+                    break
+                end
+            end
+
+            if not selected then
+                CraftState.Status = string.format(
+                    "Need %d same-name eligible pets (found %d eligible total)",
+                    CraftState.PetsToUse, eligibleCount
+                )
+                return
+            end
+
+            local machine = getGoldenMachineTarget()
+            if not machine then
+                CraftState.Status = "Golden InteractionPoint not found"
+                return
+            end
+
+            CraftState.Status = "Teleporting to Golden Machine..."
+            local reached, reason = TeleportIntoInteractionPoint(machine)
+            if not reached then
+                CraftState.Status = "Golden teleport failed: " .. tostring(reason)
+                return
+            end
+
+            CraftState.isRequestPending = true
+            CraftState.Status = "Sending Golden craft request for " .. selectedName .. "..."
+            local fired, fireError = pcall(function()
+                MachineService.MachineCraftRequested:Fire({
+                    Machine = "Golden",
+                    PetIds = selected,
+                })
+            end)
+            if not fired then
+                CraftState.isRequestPending = false
+                CraftState.Status = "Golden remote error: " .. tostring(fireError)
+                return
+            end
+
+            task.delay(8, function()
+                if CraftState.isRequestPending then
+                    CraftState.isRequestPending = false
+                    CraftState.lastCraftResultTime = os.clock()
+                    CraftState.Status = "No Golden craft response from server"
+                end
+            end)
+        end)
+
+        if not ok then
+            CraftState.isRequestPending = false
+            CraftState.Status = "Golden auto-craft error: " .. tostring(err)
         end
     end
 end)
