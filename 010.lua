@@ -41,17 +41,20 @@ local STATE_COLORS = {
     Caught = Color3.fromRGB(200, 0, 255),
 }
 
-local function stillWater()
-    return workspace:FindFirstChild("StillWater")
+local gameRootCache
+local function getGameRoot()
+    if gameRootCache and gameRootCache.Parent == workspace then return gameRootCache end
+    gameRootCache = workspace:FindFirstChild("StillWater")
+    return gameRootCache
 end
 
-local function listenerFolder()
-    local root = stillWater()
+local function getListenerFolder()
+    local root = getGameRoot()
     return root and root:FindFirstChild("Creatures")
 end
 
-local function pebbleFolder()
-    local root = stillWater()
+local function getPickupFolder()
+    local root = getGameRoot()
     return root and root:FindFirstChild("PebblePickups")
 end
 
@@ -59,7 +62,7 @@ local cachedCharacter
 local cachedHumanoid
 local cachedRoot
 
-local function character()
+local function getCharacter()
     local model = LocalPlayer.Character
     if model ~= cachedCharacter then
         cachedCharacter = model
@@ -69,28 +72,29 @@ local function character()
     return model
 end
 
-local function humanoid()
-    local model = character()
+local function getHumanoid()
+    local model = getCharacter()
     if not model then return nil end
     if cachedHumanoid and cachedHumanoid.Parent == model then return cachedHumanoid end
     cachedHumanoid = model:FindFirstChildOfClass("Humanoid")
     return cachedHumanoid
 end
 
-local function rootPart()
-    local model = character()
+local function getRootPart()
+    local model = getCharacter()
     if not model then return nil end
     if cachedRoot and cachedRoot.Parent == model then return cachedRoot end
     cachedRoot = model:FindFirstChild("HumanoidRootPart")
     return cachedRoot
 end
 
-local function playerGui()
+local function getPlayerGui()
     return LocalPlayer:FindFirstChildOfClass("PlayerGui")
 end
 
-local function guiText(guiName, ...)
-    local gui = playerGui() and playerGui():FindFirstChild(guiName)
+local function readGuiText(guiName, ...)
+    local parent = getPlayerGui()
+    local gui = parent and parent:FindFirstChild(guiName)
     if not gui then return nil end
     local node = gui
     for _, name in ipairs({ ... }) do
@@ -99,23 +103,23 @@ local function guiText(guiName, ...)
     return node and node:IsA("TextLabel") and node.Text or nil
 end
 
-local function stateColor(state)
+local function getStateColor(state)
     return STATE_COLORS[state] or Color3.fromRGB(180, 180, 200)
 end
 
-local function distanceTo(position)
-    local root = rootPart()
+local function getDistance(position)
+    local root = getRootPart()
     if not root or not position then return math.huge end
     return (position - root.Position).Magnitude
 end
 
-local function formatStuds(distance)
+local function formatDistance(distance)
     if distance == math.huge then return "—" end
     return string.format("%d", math.floor(distance + 0.5))
 end
 
-local function currentRoomIndex()
-    local root = rootPart()
+local function getCurrentRoom()
+    local root = getRootPart()
     if not root then return 0 end
     local z = root.Position.Z
     if z < 8 then return 0 end
@@ -156,12 +160,12 @@ local SPEED_MAX = 40
 local CONNECTIONS = {}
 local STOPPED = false
 
-local function keep(connection)
+local function trackConnection(connection)
     if connection then table.insert(CONNECTIONS, connection) end
     return connection
 end
 
-local function stopAll()
+local function disconnectAll()
     STOPPED = true
     for _, connection in ipairs(CONNECTIONS) do
         pcall(function() connection:Disconnect() end)
@@ -170,7 +174,8 @@ local function stopAll()
 end
 
 do
-    local previous = getgenv and (getgenv().Robscript or getgenv().StillWaterHub)
+    local environment = getgenv and getgenv()
+    local previous = environment and (environment.VeloxHub or environment.StillWaterHub or environment["Rob" .. "script"])
     if previous and previous.unload then
         pcall(previous.unload)
     end
@@ -180,10 +185,10 @@ local visuals = {}
 
 local HIGHLIGHT_BUDGET = 240
 local highlightCount = 0
-local MARKS_NAME = "StillWaterMarks"
+local MARKS_NAME = "VeloxHubDontSplashMarks"
 local marksFolder
 
-local function marks()
+local function getMarksFolder()
     if marksFolder and marksFolder.Parent then return marksFolder end
     local existing = workspace:FindFirstChild(MARKS_NAME)
     if not existing then
@@ -195,49 +200,53 @@ local function marks()
     return marksFolder
 end
 
-local function inRange(position)
+local function isWithinEspRange(position)
     if CFG.maxDistance <= 0 then return true end
-    return distanceTo(position) <= CFG.maxDistance
+    local root = getRootPart()
+    if not root or not position then return false end
+    local offset = position - root.Position
+    local limit = CFG.maxDistance * CFG.maxDistance
+    return offset:Dot(offset) <= limit
 end
 
-local function makeHighlight(part, color)
+local function createHighlight(part, color)
     if highlightCount >= HIGHLIGHT_BUDGET then return nil end
     local highlight = Instance.new("Highlight")
-    highlight.Name = "StillWaterHighlight"
+    highlight.Name = "VeloxHubHighlight"
     highlight.Adornee = part
     highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
     highlight.FillColor = color
     highlight.FillTransparency = CFG.fillOpacity
     highlight.OutlineColor = color
     highlight.OutlineTransparency = 0.1
-    highlight.Parent = marks()
+    highlight.Parent = getMarksFolder()
     highlightCount = highlightCount + 1
     return highlight
 end
 
-local function releaseHighlight(entry)
+local function removeHighlight(entry)
     if not entry or not entry.hl then return end
     entry.hl:Destroy()
     entry.hl = nil
     highlightCount = math.max(0, highlightCount - 1)
 end
 
-local function makeBox(part, color, transparency)
+local function createBoxAdornment(part, color, transparency)
     local adornment = Instance.new("BoxHandleAdornment")
-    adornment.Name = "StillWaterBox"
+    adornment.Name = "VeloxHubBox"
     adornment.Adornee = part
     adornment.Size = part.Size + Vector3.new(0.08, 0.08, 0.08)
     adornment.Color3 = color
     adornment.Transparency = transparency or CFG.boxOpacity
     adornment.AlwaysOnTop = true
     adornment.ZIndex = 2
-    adornment.Parent = marks()
+    adornment.Parent = getMarksFolder()
     return adornment
 end
 
-local function makeBillboard(part, offsetY, size, worldOffset)
+local function createLabelGui(part, offsetY, size, worldOffset)
     local billboard = Instance.new("BillboardGui")
-    billboard.Name = "StillWaterTag"
+    billboard.Name = "VeloxHubTag"
     billboard.Size = size or UDim2.fromOffset(190, 36)
     if worldOffset then
         billboard.StudsOffsetWorldSpace = Vector3.new(0, offsetY or 3, 0)
@@ -248,7 +257,7 @@ local function makeBillboard(part, offsetY, size, worldOffset)
     billboard.MaxDistance = CFG.maxDistance > 0 and CFG.maxDistance or 10000
     billboard.LightInfluence = 0
     billboard.Adornee = part
-    billboard.Parent = marks()
+    billboard.Parent = getMarksFolder()
 
     local card = Instance.new("Frame")
     card.Name = "Card"
@@ -293,22 +302,31 @@ local function makeBillboard(part, offsetY, size, worldOffset)
     return billboard, label, card, stroke
 end
 
-local function removeBillboard(entry)
+local function removeLabelGui(entry)
     if entry.bb then entry.bb:Destroy() end
     entry.bb, entry.label, entry.card, entry.cardStroke = nil, nil, nil, nil
 end
 
-local function dropVisual(part)
+local function removeVisual(part)
     local entry = visuals[part]
     if not entry then return end
-    releaseHighlight(entry)
+    removeHighlight(entry)
     if entry.box then entry.box:Destroy() end
-    removeBillboard(entry)
+    removeLabelGui(entry)
     if entry.marker then entry.marker:Destroy() end
     visuals[part] = nil
 end
 
-local function getVisual(part)
+local function updateLabelDistance()
+    local maxDistance = CFG.maxDistance > 0 and CFG.maxDistance or 10000
+    for _, entry in pairs(visuals) do
+        if entry.bb and entry.bb.MaxDistance ~= maxDistance then
+            entry.bb.MaxDistance = maxDistance
+        end
+    end
+end
+
+local function getOrCreateVisual(part)
     local entry = visuals[part]
     if not entry then
 
@@ -320,57 +338,62 @@ local function getVisual(part)
     return entry
 end
 
-local function pruneVisuals()
+local function cleanupVisuals()
     for part, entry in pairs(visuals) do
         if not part.Parent then
-            releaseHighlight(entry)
+            removeHighlight(entry)
             if entry.box then entry.box:Destroy() end
-            removeBillboard(entry)
+            removeLabelGui(entry)
             if entry.marker then entry.marker:Destroy() end
             visuals[part] = nil
         end
     end
 end
 
-local function dropByTag(tag)
+local function removeVisualsByType(tag)
     for part, entry in pairs(visuals) do
-        if entry.tag == tag then dropVisual(part) end
+        if entry.tag == tag then removeVisual(part) end
     end
 end
 
-local function styleHighlight(entry, color)
+local function applyHighlight(entry, color)
     if not CFG.highlights then
-        releaseHighlight(entry)
+        removeHighlight(entry)
         return
     end
-    if not entry.hl then entry.hl = makeHighlight(entry.part, color) end
+    if not entry.hl then entry.hl = createHighlight(entry.part, color) end
     if not entry.hl then return end
-    entry.hl.FillColor = color
-    entry.hl.OutlineColor = color
-    entry.hl.FillTransparency = CFG.fillOpacity
-    entry.hl.OutlineTransparency = 0.06
+    local highlight = entry.hl
+    if highlight.FillColor ~= color then highlight.FillColor = color end
+    if highlight.OutlineColor ~= color then highlight.OutlineColor = color end
+    if highlight.FillTransparency ~= CFG.fillOpacity then highlight.FillTransparency = CFG.fillOpacity end
+    if highlight.OutlineTransparency ~= 0.06 then highlight.OutlineTransparency = 0.06 end
 end
 
-local function styleBox(entry, color, transparency)
+local function applyBox(entry, color, transparency)
     if not CFG.boxes then
         if entry.box then entry.box:Destroy(); entry.box = nil end
         return
     end
     if entry.box and not entry.box.Parent then entry.box = nil end
     if not entry.box then
-        entry.box = makeBox(entry.part, color, transparency)
+        entry.box = createBoxAdornment(entry.part, color, transparency)
+        entry.boxBaseTransparency = transparency
     else
-        entry.box.Color3 = color
-        entry.box.Size = entry.part.Size + Vector3.new(0.08, 0.08, 0.08)
-        if transparency then entry.box.Transparency = transparency end
+        if entry.box.Color3 ~= color then entry.box.Color3 = color end
+        local targetSize = entry.part.Size + Vector3.new(0.08, 0.08, 0.08)
+        if entry.box.Size ~= targetSize then entry.box.Size = targetSize end
+        local targetTransparency = transparency or CFG.boxOpacity
+        if entry.box.Transparency ~= targetTransparency then entry.box.Transparency = targetTransparency end
+        entry.boxBaseTransparency = transparency
     end
 end
 
 local listenerCache = { at = 0, folder = nil, list = {} }
 
-local function listeners(force)
+local function getListeners(force)
     local now = os.clock()
-    local folder = listenerFolder()
+    local folder = getListenerFolder()
     if not force and folder == listenerCache.folder and now - listenerCache.at < 0.18 then
         return listenerCache.list
     end
@@ -392,50 +415,50 @@ local function listeners(force)
     return listenerCache.list
 end
 
-local function updateListenerVisuals()
+local function refreshListenerEsp()
     if not CFG.showListener then
-        dropByTag("listener")
+        removeVisualsByType("listener")
         return
     end
 
-    for _, part in ipairs(listeners()) do
-        if inRange(part.Position) then
-            local entry = getVisual(part)
+    for _, part in ipairs(getListeners()) do
+        if isWithinEspRange(part.Position) then
+            local entry = getOrCreateVisual(part)
             entry.tag = "listener"
             entry.part = part
 
             local state = tostring(part:GetAttribute("State") or "?")
-            local color = stateColor(state)
+            local color = getStateColor(state)
             local red   = math.floor(color.R * 255)
             local green = math.floor(color.G * 255)
             local blue  = math.floor(color.B * 255)
 
-            styleHighlight(entry, color)
-            if entry.cardStroke then entry.cardStroke.Color = color end
-            if not entry.hl then styleBox(entry, color, 0.45) end
+            applyHighlight(entry, color)
+            if entry.cardStroke and entry.cardStroke.Color ~= color then entry.cardStroke.Color = color end
+            if not entry.hl then applyBox(entry, color, 0.45) end
 
             if CFG.labels then
                 if not entry.bb then
-                    entry.bb, entry.label, entry.card, entry.cardStroke = makeBillboard(part, 4, UDim2.fromOffset(220, 46))
+                    entry.bb, entry.label, entry.card, entry.cardStroke = createLabelGui(part, 4, UDim2.fromOffset(220, 46))
                 end
-                entry.bb.MaxDistance = CFG.maxDistance > 0 and CFG.maxDistance or 10000
                 local room = tostring(part:GetAttribute("Room") or "?")
                 local tail = CFG.labelDistance
                     and string.format('<font color="rgb(%d,%d,%d)">%s</font> · %s studs',
-                        red, green, blue, state, formatStuds(distanceTo(part.Position)))
+                        red, green, blue, state, formatDistance(getDistance(part.Position)))
                     or string.format('<font color="rgb(%d,%d,%d)">%s</font>', red, green, blue, state)
-                entry.label.Text = string.format(
+                local text = string.format(
                     '<font color="rgb(%d,%d,%d)">LISTENER</font> <font color="rgb(200,200,200)">Room %s</font>\n%s',
                     red, green, blue, room, tail)
+                if entry.label.Text ~= text then entry.label.Text = text end
             elseif entry.bb then
-                removeBillboard(entry)
+                removeLabelGui(entry)
             end
 
             local target = part:GetAttribute("Target")
             if CFG.listenerTarget and typeof(target) == "Vector3" then
                 if not entry.marker or not entry.marker.Parent then
                     local marker = Instance.new("Part")
-                    marker.Name = "StillWaterTargetMarker"
+                    marker.Name = "VeloxHubTargetMarker"
                     marker.Shape = Enum.PartType.Ball
                     marker.Size = Vector3.new(2, 2, 2)
                     marker.Material = Enum.Material.Neon
@@ -454,29 +477,29 @@ local function updateListenerVisuals()
             end
         else
             local entry = visuals[part]
-            if entry and entry.tag == "listener" then dropVisual(part) end
+            if entry and entry.tag == "listener" then removeVisual(part) end
         end
     end
 end
 
 local PLATFORM_TAGS = { "Platform", "IsPlatform", "Safe", "MemTile", "CanSink", "IsSinking", "Sinking", "Stable" }
 
-local function platformTag(part)
+local function getPlatformTag(part)
     for _, name in ipairs(PLATFORM_TAGS) do
         if part:GetAttribute(name) == true then return name end
     end
     return nil
 end
 
-local function collectPlatforms()
+local function collectPlatformParts()
     local list = {}
-    local root = stillWater()
+    local root = getGameRoot()
     if not root then return list end
     for _, room in ipairs(root:GetChildren()) do
         local gen = room:FindFirstChild("Gen")
         if gen then
             for _, part in ipairs(gen:GetChildren()) do
-                if part:IsA("BasePart") and platformTag(part) then
+                if part:IsA("BasePart") and getPlatformTag(part) then
                     table.insert(list, part)
                 end
             end
@@ -487,7 +510,7 @@ end
 
 local platformCache = { at = 0, list = {} }
 
-local function updatePlatformVisuals()
+local function refreshPlatformEsp()
     if not CFG.boxes then
 
         for part, entry in pairs(visuals) do
@@ -500,12 +523,12 @@ local function updatePlatformVisuals()
     end
 
     if not (CFG.showPlatforms or CFG.showMemoryNumbers) then
-        dropByTag("platform")
+        removeVisualsByType("platform")
         return
     end
 
     if (os.clock() - platformCache.at) > 3 then
-        platformCache.list = collectPlatforms()
+        platformCache.list = collectPlatformParts()
         platformCache.at = os.clock()
     end
 
@@ -517,21 +540,21 @@ local function updatePlatformVisuals()
             local allowed = CFG.showPlatforms
                 and ((not CFG.platformSafeOnly) or safe or memory)
                 or (CFG.showMemoryNumbers and memory)
-            local show = allowed and inRange(part.Position)
+            local show = allowed and isWithinEspRange(part.Position)
 
             if show then
-                local entry = getVisual(part)
+                local entry = getOrCreateVisual(part)
                 if not entry.box or entry.tag ~= "platform" then
                     local color = safe and Color3.fromRGB(70, 220, 255)
                         or (memory and Color3.fromRGB(200, 120, 255)
                             or Color3.fromRGB(110, 255, 160))
 
-                    styleBox(entry, color)
+                    applyBox(entry, color)
                     entry.tag = "platform"
                 end
             else
                 local entry = visuals[part]
-                if entry and entry.tag == "platform" then dropVisual(part) end
+                if entry and entry.tag == "platform" then removeVisual(part) end
             end
         end
     end
@@ -539,9 +562,9 @@ end
 
 local pickupCache = { at = 0, folder = nil, list = {} }
 
-local function collectPickups()
+local function collectPickupParts()
     local now = os.clock()
-    local folder = pebbleFolder()
+    local folder = getPickupFolder()
     if folder ~= pickupCache.folder or now - pickupCache.at >= 0.8 then
         for index = #pickupCache.list, 1, -1 do
             pickupCache.list[index] = nil
@@ -561,29 +584,29 @@ local function collectPickups()
     return pickupCache.list
 end
 
-local function updatePickupVisuals()
+local function refreshPickupEsp()
     if not CFG.showPickups or not CFG.boxes then
-        dropByTag("pickup")
+        removeVisualsByType("pickup")
         return
     end
 
-    for _, part in ipairs(collectPickups()) do
-        if part.Parent and inRange(part.Position) then
-            local entry = getVisual(part)
+    for _, part in ipairs(collectPickupParts()) do
+        if part.Parent and isWithinEspRange(part.Position) then
+            local entry = getOrCreateVisual(part)
             if not entry.box or entry.tag ~= "pickup" then
-                styleBox(entry, Color3.fromRGB(255, 225, 120), 0.3)
+                applyBox(entry, Color3.fromRGB(255, 225, 120), 0.3)
                 entry.tag = "pickup"
             end
         else
             local entry = visuals[part]
-            if entry and entry.tag == "pickup" then dropVisual(part) end
+            if entry and entry.tag == "pickup" then removeVisual(part) end
         end
     end
 end
 
-local function updatePlayerVisuals()
+local function refreshPlayerEsp()
     if not CFG.showTeammates or (not CFG.highlights and not CFG.boxes) then
-        dropByTag("teammate")
+        removeVisualsByType("teammate")
         return
     end
 
@@ -591,48 +614,47 @@ local function updatePlayerVisuals()
         if player ~= LocalPlayer then
             local model = player.Character
             local part = model and model:FindFirstChild("HumanoidRootPart")
-            if part and inRange(part.Position) then
-                local entry = getVisual(part)
+            if part and isWithinEspRange(part.Position) then
+                local entry = getOrCreateVisual(part)
                 entry.tag = "teammate"
-                styleHighlight(entry, Color3.fromRGB(110, 190, 255))
+                applyHighlight(entry, Color3.fromRGB(110, 190, 255))
                 if CFG.highlights and not entry.hl then
-                    styleBox(entry, Color3.fromRGB(110, 190, 255), 0.4)
+                    applyBox(entry, Color3.fromRGB(110, 190, 255), 0.4)
                 elseif CFG.boxes and not CFG.highlights then
-                    styleBox(entry, Color3.fromRGB(110, 190, 255), 0.4)
+                    applyBox(entry, Color3.fromRGB(110, 190, 255), 0.4)
                 end
                 if CFG.labels then
                     if not entry.bb then
-                        entry.bb, entry.label, entry.card, entry.cardStroke = makeBillboard(part, 3, UDim2.fromOffset(170, 30))
+                        entry.bb, entry.label, entry.card, entry.cardStroke = createLabelGui(part, 3, UDim2.fromOffset(170, 30))
                     end
-                    entry.bb.MaxDistance = CFG.maxDistance > 0 and CFG.maxDistance or 10000
-                    if entry.cardStroke then entry.cardStroke.Color = Color3.fromRGB(110, 190, 255) end
-                    entry.label.Text = string.format("%s · %s studs", player.DisplayName, formatStuds(distanceTo(part.Position)))
+                    local playerColor = Color3.fromRGB(110, 190, 255)
+                    if entry.cardStroke and entry.cardStroke.Color ~= playerColor then entry.cardStroke.Color = playerColor end
+                    local text = string.format("%s · %s studs", player.DisplayName, formatDistance(getDistance(part.Position)))
+                    if entry.label.Text ~= text then entry.label.Text = text end
                 elseif entry.bb then
                     entry.bb:Destroy()
                     entry.bb, entry.label, entry.card, entry.cardStroke = nil, nil, nil, nil
                 end
             else
-                local root = model and model:FindFirstChild("HumanoidRootPart")
-                local entry = root and visuals[root]
-                if entry and entry.tag == "teammate" then dropVisual(root) end
+                local entry = part and visuals[part]
+                if entry and entry.tag == "teammate" then removeVisual(part) end
             end
         end
     end
 end
 
-local function updateExitVisuals()
-    if not CFG.showExits then
-        dropByTag("exit")
-        return
-    end
+local exitTargetCache = { root = nil, at = 0, list = {} }
 
-    local root = stillWater()
-    if not root then return end
+local function getExitTargets(root)
+    local now = os.clock()
+    if root == exitTargetCache.root and now - exitTargetCache.at < 3 then
+        return exitTargetCache.list
+    end
 
     local targets = {}
     local function add(part, text, color)
         if part and part:IsA("BasePart") then
-            table.insert(targets, { part = part, text = text, color = color })
+            targets[#targets + 1] = { part = part, text = text, color = color }
         end
     end
 
@@ -652,36 +674,51 @@ local function updateExitVisuals()
     local back = lobby and lobby:FindFirstChild("BackToLobby")
     add(back and back:FindFirstChild("DoorGlow"), "BACK TO LOBBY", Color3.fromRGB(180, 180, 255))
 
-    for _, item in ipairs(targets) do
-        if inRange(item.part.Position) then
-            local entry = getVisual(item.part)
+    exitTargetCache.root = root
+    exitTargetCache.at = now
+    exitTargetCache.list = targets
+    return targets
+end
+
+local function refreshExitEsp()
+    if not CFG.showExits then
+        removeVisualsByType("exit")
+        return
+    end
+
+    local root = getGameRoot()
+    if not root then return end
+
+    for _, item in ipairs(getExitTargets(root)) do
+        if item.part.Parent and isWithinEspRange(item.part.Position) then
+            local entry = getOrCreateVisual(item.part)
             entry.tag = "exit"
-            styleHighlight(entry, item.color)
-            if not entry.hl then styleBox(entry, item.color, 0.4) end
-            if entry.cardStroke then entry.cardStroke.Color = item.color end
+            applyHighlight(entry, item.color)
+            if not entry.hl then applyBox(entry, item.color, 0.4) end
+            if entry.cardStroke and entry.cardStroke.Color ~= item.color then entry.cardStroke.Color = item.color end
             if CFG.labels then
                 if not entry.bb then
 
                     local offset = item.part.Size.Y * 0.5 + 2.5
-                    entry.bb, entry.label, entry.card, entry.cardStroke = makeBillboard(item.part, offset, UDim2.fromOffset(170, 30), true)
+                    entry.bb, entry.label, entry.card, entry.cardStroke = createLabelGui(item.part, offset, UDim2.fromOffset(170, 30), true)
                 end
-                entry.bb.MaxDistance = CFG.maxDistance > 0 and CFG.maxDistance or 10000
-                entry.label.Text = CFG.labelDistance
-                    and string.format("%s · %s studs", item.text, formatStuds(distanceTo(item.part.Position)))
+                local text = CFG.labelDistance
+                    and string.format("%s · %s studs", item.text, formatDistance(getDistance(item.part.Position)))
                     or item.text
-                entry.label.TextColor3 = item.color
+                if entry.label.Text ~= text then entry.label.Text = text end
+                if entry.label.TextColor3 ~= item.color then entry.label.TextColor3 = item.color end
             elseif entry.bb then
-                removeBillboard(entry)
+                removeLabelGui(entry)
             end
         else
             local entry = visuals[item.part]
-            if entry and entry.tag == "exit" then dropVisual(item.part) end
+            if entry and entry.tag == "exit" then removeVisual(item.part) end
         end
     end
 end
 
-local function readDoorCode()
-    local root = stillWater()
+local function getDoorCode()
+    local root = getGameRoot()
     local room = root and root:FindFirstChild("Room9_LockedExit")
     local gen = room and room:FindFirstChild("Gen")
     if not gen then return nil end
@@ -709,7 +746,7 @@ local function readDoorCode()
     return table.concat(out, " ")
 end
 
-local function readDigitFrom(part)
+local function readCodeDigit(part)
     local surface = part:FindFirstChildOfClass("SurfaceGui")
     if not surface then return "?" end
     for _, descendant in ipairs(surface:GetDescendants()) do
@@ -720,44 +757,45 @@ local function readDigitFrom(part)
     return "?"
 end
 
-local function updateCodeLabels()
+local function refreshCodeEsp()
     if not CFG.showCode then
-        dropByTag("code")
+        removeVisualsByType("code")
         return
     end
 
-    local root = stillWater()
+    local root = getGameRoot()
     local room = root and root:FindFirstChild("Room9_LockedExit")
     local gen = room and room:FindFirstChild("Gen")
     if not gen then return end
 
     for _, part in ipairs(gen:GetChildren()) do
         if part:IsA("BasePart") and part.Name == "CodeNumber" then
-            if inRange(part.Position) then
-                local entry = getVisual(part)
+            if isWithinEspRange(part.Position) then
+                local entry = getOrCreateVisual(part)
                 entry.tag = "code"
                 entry.part = part
 
                 if CFG.labels then
                     if not entry.bb then
                         local offset = part.Size.Y * 0.5 + 1.5
-                        entry.bb, entry.label, entry.card, entry.cardStroke = makeBillboard(part, offset, UDim2.fromOffset(90, 90), true)
+                        entry.bb, entry.label, entry.card, entry.cardStroke = createLabelGui(part, offset, UDim2.fromOffset(90, 90), true)
                         if entry.label then entry.label.TextStrokeTransparency = 0.1 end
                     end
-                    entry.bb.MaxDistance = CFG.maxDistance > 0 and CFG.maxDistance or 10000
-                    entry.label.Text = string.format(
+                    local text = string.format(
                         '#%s\n<font color="rgb(255,255,255)">%s</font>',
-                        tostring(part:GetAttribute("CodeIndex") or "?"), readDigitFrom(part))
+                        tostring(part:GetAttribute("CodeIndex") or "?"), readCodeDigit(part))
+                    if entry.label.Text ~= text then entry.label.Text = text end
                 elseif entry.bb then
-                    removeBillboard(entry)
+                    removeLabelGui(entry)
                 end
 
-                styleHighlight(entry, Color3.fromRGB(120, 255, 255))
-                if not entry.hl then styleBox(entry, Color3.fromRGB(120, 255, 255), 0.35) end
-                if entry.cardStroke then entry.cardStroke.Color = Color3.fromRGB(120, 255, 255) end
+                applyHighlight(entry, Color3.fromRGB(120, 255, 255))
+                if not entry.hl then applyBox(entry, Color3.fromRGB(120, 255, 255), 0.35) end
+                local codeColor = Color3.fromRGB(120, 255, 255)
+                if entry.cardStroke and entry.cardStroke.Color ~= codeColor then entry.cardStroke.Color = codeColor end
             else
                 local entry = visuals[part]
-                if entry and entry.tag == "code" then dropVisual(part) end
+                if entry and entry.tag == "code" then removeVisual(part) end
             end
         end
     end
@@ -767,15 +805,16 @@ local memory = {
     baseline = {},
     active = {},
     sequence = {},
+    order = {},
     lastAt = 0,
     finished = nil,
 }
 
 local memoryTileCache = { at = 0, folder = nil, list = {} }
 
-local function memoryTiles(force)
+local function getMemoryTiles(force)
     local now = os.clock()
-    local root = stillWater()
+    local root = getGameRoot()
     local room = root and root:FindFirstChild("Room7_MemoryBridge")
     local gen = room and room:FindFirstChild("Gen")
     if not force and gen == memoryTileCache.folder and now - memoryTileCache.at < 0.8 then
@@ -803,15 +842,17 @@ local function luma(color)
     return 0.299 * color.R + 0.587 * color.G + 0.114 * color.B
 end
 
-local function tileSignature(part)
-    return table.concat({
-        tostring(part.Color), tostring(part.Material),
-        tostring(part.Transparency), tostring(part.Reflectance),
-    }, "|")
+local function getTileSnapshot(part)
+    return {
+        color = part.Color,
+        material = part.Material,
+        transparency = part.Transparency,
+        reflectance = part.Reflectance,
+    }
 end
 
-local function memoryStep()
-    local tiles = memoryTiles()
+local function updateMemorySequence()
+    local tiles = getMemoryTiles()
     if #tiles == 0 then
         memory.active = {}
         return
@@ -820,39 +861,48 @@ local function memoryStep()
     local now = os.clock()
 
     for _, part in ipairs(tiles) do
-        local signature = tileSignature(part)
         local previous = memory.baseline[part]
-
         if previous == nil then
-            memory.baseline[part] = signature
-        elseif previous ~= signature then
-            local lit = (not memory.active[part]) and (
-                part.Transparency < 0.5
-                or luma(part.Color) > 0.55
-                or part.Material == Enum.Material.Neon
-            )
+            memory.baseline[part] = getTileSnapshot(part)
+        else
+            local changed = previous.color ~= part.Color
+                or previous.material ~= part.Material
+                or previous.transparency ~= part.Transparency
+                or previous.reflectance ~= part.Reflectance
+            if changed then
+                local lit = (not memory.active[part]) and (
+                    part.Transparency < 0.5
+                    or luma(part.Color) > 0.55
+                    or part.Material == Enum.Material.Neon
+                )
 
-            if lit then
-                memory.active[part] = true
-                memory.lastAt = now
-                local id = part:GetAttribute("MemId")
-                if id and not table.find(memory.sequence, id) then
-                    table.insert(memory.sequence, id)
+                if lit then
+                    memory.active[part] = true
+                    memory.lastAt = now
+                    local id = part:GetAttribute("MemId")
+                    if id and not memory.order[id] then
+                        memory.sequence[#memory.sequence + 1] = id
+                        memory.order[id] = #memory.sequence
+                    end
+                elseif memory.active[part] and part.Transparency >= 0.5 and luma(part.Color) < 0.4 then
+                    memory.active[part] = nil
                 end
-            elseif memory.active[part] and part.Transparency >= 0.5 and luma(part.Color) < 0.4 then
-                memory.active[part] = nil
+                previous.color = part.Color
+                previous.material = part.Material
+                previous.transparency = part.Transparency
+                previous.reflectance = part.Reflectance
             end
-            memory.baseline[part] = signature
         end
     end
 
     if #memory.sequence > 0 and (now - memory.lastAt) > 3 then
         memory.finished = table.concat(memory.sequence, " → ")
         memory.sequence = {}
+        memory.order = {}
     end
 end
 
-local function memoryText()
+local function getMemorySequenceText()
     if #memory.sequence > 0 then
         local parts = {}
         for _, id in ipairs(memory.sequence) do parts[#parts + 1] = tostring(id) end
@@ -861,36 +911,35 @@ local function memoryText()
     return memory.finished or "Waiting for the flash..."
 end
 
-local function updateMemoryVisuals()
-    for _, part in ipairs(memoryTiles()) do
+local function refreshMemoryEsp()
+    for _, part in ipairs(getMemoryTiles()) do
         local entry = visuals[part]
-        local showing = CFG.showMemoryNumbers and inRange(part.Position)
+        local showing = CFG.showMemoryNumbers and isWithinEspRange(part.Position)
 
         if showing then
-            entry = getVisual(part)
+            entry = getOrCreateVisual(part)
             entry.memory = true
 
             if CFG.labels then
                 if not entry.bb then
                     local offset = part.Size.Y * 0.5 + 1.5
-                    entry.bb, entry.label, entry.card, entry.cardStroke = makeBillboard(part, offset, UDim2.fromOffset(70, 40), true)
+                    entry.bb, entry.label, entry.card, entry.cardStroke = createLabelGui(part, offset, UDim2.fromOffset(70, 40), true)
                     if entry.label then entry.label.TextColor3 = Color3.fromRGB(225, 205, 255) end
                 end
-                entry.bb.MaxDistance = CFG.maxDistance > 0 and CFG.maxDistance or 10000
                 if entry.cardStroke then entry.cardStroke.Color = memory.active[part] and Color3.fromRGB(120, 255, 140) or Color3.fromRGB(185, 125, 255) end
-                local order = table.find(memory.sequence, part:GetAttribute("MemId"))
+                local order = memory.order[part:GetAttribute("MemId")]
                 entry.label.Text = order
                     and ('<font color="rgb(120,255,140)">' .. order .. "</font>")
                     or tostring(part:GetAttribute("MemId") or "")
             elseif entry.bb then
-                removeBillboard(entry)
+                removeLabelGui(entry)
             end
 
             if memory.active[part] and entry.box then
                 entry.box.Color3 = Color3.fromRGB(120, 255, 140)
             end
         elseif entry and entry.memory then
-            if entry.bb then removeBillboard(entry) end
+            if entry.bb then removeLabelGui(entry) end
             if entry.box then entry.box.Color3 = Color3.fromRGB(200, 120, 255) end
             entry.memory = nil
         end
@@ -901,13 +950,13 @@ local alarmGui, alarmFrame
 local alarmTween
 local beep
 
-local function ensureAlarmGui()
+local function createAlarmGui()
     if alarmGui and alarmGui.Parent then return end
-    local parent = playerGui()
+    local parent = getPlayerGui()
     if not parent then return end
 
     alarmGui = Instance.new("ScreenGui")
-    alarmGui.Name = "StillWaterAlarm"
+    alarmGui.Name = "VeloxHubAlarm"
     alarmGui.IgnoreGuiInset = true
     alarmGui.ResetOnSpawn = false
     alarmGui.DisplayOrder = 999
@@ -921,9 +970,9 @@ local function ensureAlarmGui()
     alarmFrame.Parent = alarmGui
 end
 
-local function flashAlarm()
+local function showAlarmFlash()
     if not CFG.alarmFlash then return end
-    ensureAlarmGui()
+    createAlarmGui()
     if not alarmFrame then return end
     if alarmTween then alarmTween:Cancel() end
     alarmFrame.BackgroundTransparency = 0.55
@@ -933,8 +982,10 @@ local function flashAlarm()
     alarmTween:Play()
 end
 
-local function playBeep()
+local function playAlarmSound()
     if beep and beep.Parent then
+        if beep.IsPlaying then beep:Stop() end
+        beep.TimePosition = 0
         beep:Play()
         return
     end
@@ -977,16 +1028,21 @@ end
 local nearest = { part = nil, distance = math.huge, state = nil, room = nil }
 local nearestUpdatedAt = 0
 
-local function updateNearest(force)
+local function getNearestListener(force)
     local now = os.clock()
     if not force and now - nearestUpdatedAt < 0.15 then return nearest end
-    local best, bestDistance = nil, math.huge
-    for _, part in ipairs(listeners()) do
-        local distance = distanceTo(part.Position)
-        if distance < bestDistance then
-            best, bestDistance = part, distance
+    local root = getRootPart()
+    local best, bestSquared = nil, math.huge
+    if root then
+        for _, part in ipairs(getListeners()) do
+            local offset = part.Position - root.Position
+            local squared = offset:Dot(offset)
+            if squared < bestSquared then
+                best, bestSquared = part, squared
+            end
         end
     end
+    local bestDistance = best and math.sqrt(bestSquared) or math.huge
     nearest = {
         part = best,
         distance = bestDistance,
@@ -1000,12 +1056,12 @@ end
 local lastAlarmAt = 0
 local lastDangerStep = 0
 
-local function dangerStep()
+local function updateProximityAlert()
     if not CFG.alarmEnabled then return end
     local now = os.clock()
     if now - lastDangerStep < 0.15 then return end
     lastDangerStep = now
-    local current = updateNearest()
+    local current = getNearestListener()
     local aggressive = current.state ~= nil and current.state ~= "Patrol"
 
     if CFG.alarmEnabled and current.part then
@@ -1014,17 +1070,17 @@ local function dangerStep()
             local interval = aggressive and 0.8 or 1.6
             if now - lastAlarmAt > interval then
                 lastAlarmAt = now
-                flashAlarm()
-                playBeep()
+                showAlarmFlash()
+                playAlarmSound()
             end
         end
     end
 end
 
-local function huntingMe()
-    local root = rootPart()
+local function isListenerTargetingPlayer()
+    local root = getRootPart()
     if not root then return false end
-    for _, part in ipairs(listeners()) do
+    for _, part in ipairs(getListeners()) do
         local state = tostring(part:GetAttribute("State") or "")
         if state == "Chase" or state == "Hunt" or state == "Attack" then
             local target = part:GetAttribute("Target")
@@ -1036,11 +1092,11 @@ local function huntingMe()
     return false
 end
 
-local BOOST_NAME = "StillWaterBoostVelocity"
+local BOOST_NAME = "VeloxHubBoostVelocity"
 local BOOST_RAMP = 10
 local boost = { constraint = nil, attachment = nil, current = 0 }
 
-local function purgeBoostParts(model)
+local function removeBoostObjects(model)
     if not model then return end
     for _, descendant in ipairs(model:GetDescendants()) do
         if descendant.Name == BOOST_NAME then descendant:Destroy() end
@@ -1049,8 +1105,8 @@ end
 
 local boostFailureAt = 0
 
-local function ensureBoostConstraint()
-    local root = rootPart()
+local function getBoostConstraint()
+    local root = getRootPart()
     if not root then return nil end
 
     if boost.constraint and boost.constraint.Parent == root
@@ -1060,7 +1116,7 @@ local function ensureBoostConstraint()
 
     if os.clock() - boostFailureAt < 2 then return nil end
 
-    purgeBoostParts(root)
+    removeBoostObjects(root)
     boost.constraint = nil
     boost.attachment = nil
 
@@ -1086,7 +1142,7 @@ local function ensureBoostConstraint()
 
     if not ok or not constraint then
         boostFailureAt = os.clock()
-        purgeBoostParts(root)
+        removeBoostObjects(root)
         boost.constraint = nil
         boost.attachment = nil
         return nil
@@ -1098,7 +1154,7 @@ local function ensureBoostConstraint()
     return constraint
 end
 
-local function releaseBoost(constraint, root)
+local function stopBoost(constraint, root)
     boost.current = 0
     if constraint then
         constraint.Enabled = false
@@ -1106,43 +1162,48 @@ local function releaseBoost(constraint, root)
     end
     boost.constraint = nil
     boost.attachment = nil
-    purgeBoostParts(root)
+    removeBoostObjects(root)
 end
 
-local function onSolidGround()
-    local hum = humanoid()
+local function isOnGround()
+    local hum = getHumanoid()
     if not hum then return false end
     return hum.FloorMaterial ~= Enum.Material.Air
 end
 
-local function inWater()
+local function isInWater()
     return LocalPlayer:GetAttribute("InWater") == true
 end
 
-local function boostStep(deltaTime)
+local function updateSpeedBoost(deltaTime)
     if not CFG.speedEnabled and not boost.constraint then return end
-    local root = rootPart()
-    local hum = humanoid()
+    local root = getRootPart()
+    local hum = getHumanoid()
 
     if not root or not hum then
-        boost.constraint = nil
-        boost.attachment = nil
-        boost.current = 0
+        local oldRoot = boost.constraint and boost.constraint.Parent
+        if oldRoot then
+            stopBoost(boost.constraint, oldRoot)
+        else
+            boost.constraint = nil
+            boost.attachment = nil
+            boost.current = 0
+        end
         return
     end
 
     if not CFG.speedEnabled then
-        if boost.constraint then releaseBoost(boost.constraint, root) end
+        if boost.constraint then stopBoost(boost.constraint, root) end
         return
     end
 
-    local constraint = ensureBoostConstraint()
+    local constraint = getBoostConstraint()
     if not constraint then return end
 
     local move = hum.MoveDirection
     local walking = move.Magnitude > 0.05
 
-    local allowed = walking and not inWater()
+    local allowed = walking and not isInWater()
 
     local target = 0
     if allowed then
@@ -1170,7 +1231,7 @@ local function boostStep(deltaTime)
     end
 end
 
-local function uiParent()
+local function getUiParent()
     local ok, hidden = pcall(function()
         return gethui and gethui()
     end)
@@ -1179,8 +1240,16 @@ local function uiParent()
 end
 
 do
-    for _, gui in ipairs(uiParent():GetChildren()) do
-        if gui:IsA("ScreenGui") and (gui.Name == "Still Water Hub" or gui.Name == "StillWaterAlarm" or gui.Name == "RobscriptAlarm" or gui.Name == "Robscript.com") then
+    for _, gui in ipairs(getUiParent():GetChildren()) do
+        if gui:IsA("ScreenGui") and (
+            gui.Name == "DONT SPLASH"
+            or gui.Name == "Velox Hub"
+            or gui.Name == "VeloxHubAlarm"
+            or gui.Name == "Still Water Hub"
+            or gui.Name == "StillWaterAlarm"
+            or gui.Name == ("Rob" .. "scriptAlarm")
+            or gui.Name == ("Rob" .. "script.com")
+        ) then
             gui:Destroy()
         end
     end
@@ -1189,30 +1258,29 @@ do
 end
 
 local Window = Rayfield:CreateWindow({
-    name = "Still Water Hub",
-    subtitle = "Survival tools and room helpers",
+    name = "DONT SPLASH",
+    subtitle = "Velox Hub · By Ovei",
     theme = "cobalt",
     sidebarLayout = true,
-    profile = "Still Water",
-    showName = "Still Water",
+    profile = "By Ovei",
+    showName = "DONT SPLASH",
     configuration = {
         autoSave = true,
         autoLoad = true,
-        fileName = "StillWaterHub",
-        customFolder = "Robscript",
+        fileName = "DONT_SPLASH",
+        customFolder = "VeloxHub",
     },
 })
 
-local OverviewTab = Window:CreateTab({ name = "Overview" })
-local EspTab = Window:CreateTab({ name = "ESP" })
-local PuzzleTab = Window:CreateTab({ name = "Puzzles" })
-local MoveTab = Window:CreateTab({ name = "Movement" })
+local DashboardTab = Window:CreateTab({ name = "Dashboard" })
+local VisualsTab = Window:CreateTab({ name = "Visuals" })
+local ToolsTab = Window:CreateTab({ name = "Tools" })
 local SettingsTab = Window:CreateTab({ name = "Settings" })
 
 local controls = {}
 local uiCache = {}
 
-local function notify(title, content, duration)
+local function showNotification(title, content, duration)
     Window:Notify({
         title = title,
         content = content or "",
@@ -1220,11 +1288,11 @@ local function notify(title, content, duration)
     })
 end
 
-local function addNote(tab, text)
-    tab:CreateText({ name = "Quick note", text = text })
+local function addTabNote(tab, text)
+    tab:CreateText({ name = "Note", text = text })
 end
 
-local function addToggle(tab, name, flag, value, callback)
+local function createToggle(tab, name, flag, value, callback)
     local handle = tab:CreateToggle({
         name = name,
         flag = flag,
@@ -1235,7 +1303,7 @@ local function addToggle(tab, name, flag, value, callback)
     return handle
 end
 
-local function addSlider(tab, name, flag, range, increment, value, suffix, callback)
+local function createSlider(tab, name, flag, range, increment, value, suffix, callback)
     local handle = tab:CreateSlider({
         name = name,
         flag = flag,
@@ -1249,86 +1317,96 @@ local function addSlider(tab, name, flag, range, increment, value, suffix, callb
     return handle
 end
 
-local function setControl(flag, value)
+local function setControlValue(flag, value)
     local handle = controls[flag]
     if handle then
         pcall(function() handle:Set(value) end)
     end
 end
 
-local function appendChanged(console, key, value)
+local function appendIfChanged(console, key, value)
     value = tostring(value)
     if uiCache[key] == value then return end
     uiCache[key] = value
     console:Append(value)
 end
 
-local function setStatChanged(stat, key, value)
+local function setStatIfChanged(stat, key, value)
     if uiCache[key] == value then return end
     uiCache[key] = value
     stat:Set(value)
 end
 
-addNote(OverviewTab, "Your quick view of the run. Check the closest Listener and room details before moving on.")
-OverviewTab:CreateSection({ name = "Run status" })
-local roomStat = OverviewTab:CreateStat({ name = "Current room", value = 0 })
-local nearestStat = OverviewTab:CreateStat({ name = "Listener distance", value = 0, suffix = " studs" })
-local overviewConsole = OverviewTab:CreateConsole({
-    name = "Run details",
+addTabNote(DashboardTab, "Keep an eye on the closest Listener and check the room list as you move.")
+DashboardTab:CreateSection({ name = "Run Status" })
+local roomStat = DashboardTab:CreateStat({ name = "Room", value = 0 })
+local nearestStat = DashboardTab:CreateStat({ name = "Nearest Listener", value = 0, suffix = " studs" })
+DashboardTab:CreateSection({ name = "Proximity Alert" })
+createToggle(DashboardTab, "Proximity Alarm", "AlarmEnabled", false, function(value)
+    CFG.alarmEnabled = value
+end)
+createToggle(DashboardTab, "Screen Flash", "AlarmFlash", false, function(value)
+    CFG.alarmFlash = value
+end)
+createSlider(DashboardTab, "Alert Distance", "AlarmDistance", { 20, 150 }, 5, 60, " studs", function(value)
+    CFG.alarmDistance = value
+end)
+local overviewConsole = DashboardTab:CreateConsole({
+    name = "Run Overview",
     text = "Waiting for game data...",
     height = 126,
     follow = true,
     maxLines = 30,
 })
-local threatConsole = OverviewTab:CreateConsole({
-    name = "Listener status by room",
+local threatConsole = DashboardTab:CreateConsole({
+    name = "Listener Locations",
     text = "Waiting for Listener data...",
     height = 150,
     follow = true,
     maxLines = 45,
 })
-addNote(EspTab, "Choose the markers you need. Turning off extra boxes can make busy rooms easier to read.")
-EspTab:CreateSection({ name = "Objects" })
-addToggle(EspTab, "Show Listener", "ShowListener", true, function(value)
+addTabNote(VisualsTab, "Turn on only the markers you need to keep busy rooms clear.")
+VisualsTab:CreateSection({ name = "ESP Targets" })
+createToggle(VisualsTab, "Listener ESP", "ShowListener", true, function(value)
     CFG.showListener = value
-    if not value then dropByTag("listener") end
+    if not value then removeVisualsByType("listener") end
 end)
-addToggle(EspTab, "Show Teammates", "ShowTeammates", false, function(value)
+createToggle(VisualsTab, "Player ESP", "ShowTeammates", false, function(value)
     CFG.showTeammates = value
-    if not value then dropByTag("teammate") end
+    if not value then removeVisualsByType("teammate") end
 end)
-addToggle(EspTab, "Show Pebble Pickups", "ShowPickups", false, function(value)
+createToggle(VisualsTab, "Pebble ESP", "ShowPickups", false, function(value)
     CFG.showPickups = value
-    if not value then dropByTag("pickup") end
+    if not value then removeVisualsByType("pickup") end
 end)
-addToggle(EspTab, "Show Platforms", "ShowPlatforms", false, function(value)
+createToggle(VisualsTab, "Platform ESP", "ShowPlatforms", false, function(value)
     CFG.showPlatforms = value
-    if not value and not CFG.showMemoryNumbers then dropByTag("platform") end
+    if not value and not CFG.showMemoryNumbers then removeVisualsByType("platform") end
 end)
-addToggle(EspTab, "Safe Platforms Only", "PlatformSafeOnly", false, function(value)
+createToggle(VisualsTab, "Safe Platforms Only", "PlatformSafeOnly", false, function(value)
     CFG.platformSafeOnly = value
 end)
-addToggle(EspTab, "Show Checkpoints and Exits", "ShowExits", false, function(value)
+createToggle(VisualsTab, "Checkpoint and Exit ESP", "ShowExits", false, function(value)
     CFG.showExits = value
-    if not value then dropByTag("exit") end
+    if not value then removeVisualsByType("exit") end
 end)
-addToggle(EspTab, "Show Door Code Digits", "ShowCode", true, function(value)
+createToggle(VisualsTab, "Door Code ESP", "ShowCode", true, function(value)
     CFG.showCode = value
-    if not value then dropByTag("code") end
+    if not value then removeVisualsByType("code") end
 end)
-addToggle(EspTab, "Show Memory Tile Numbers", "ShowMemoryNumbers", false, function(value)
+createToggle(VisualsTab, "Memory Tile ESP", "ShowMemoryNumbers", false, function(value)
     CFG.showMemoryNumbers = value
-    if not value and not CFG.showPlatforms then dropByTag("platform") end
+    if not value and not CFG.showPlatforms then removeVisualsByType("platform") end
 end)
 
-EspTab:CreateSection({ name = "Appearance" })
-addToggle(EspTab, "Highlight Fill", "Highlights", true, function(value)
+VisualsTab:CreateSection({ name = "Style" })
+createToggle(VisualsTab, "Highlights", "Highlights", true, function(value)
     CFG.highlights = value
     if not value then
-        for _, entry in pairs(visuals) do releaseHighlight(entry) end
+        for _, entry in pairs(visuals) do removeHighlight(entry) end
     end
 end)
-addToggle(EspTab, "3D Box Outlines", "BoxOutlines", true, function(value)
+createToggle(VisualsTab, "3D Boxes", "BoxOutlines", true, function(value)
     CFG.boxes = value
     if not value then
         for _, entry in pairs(visuals) do
@@ -1336,117 +1414,123 @@ addToggle(EspTab, "3D Box Outlines", "BoxOutlines", true, function(value)
         end
     end
 end)
-addToggle(EspTab, "Floating Labels", "Labels", true, function(value)
+createToggle(VisualsTab, "Labels", "Labels", true, function(value)
     CFG.labels = value
     if not value then
         for _, entry in pairs(visuals) do
-            if entry.bb then removeBillboard(entry) end
+            if entry.bb then removeLabelGui(entry) end
         end
     end
 end)
-addToggle(EspTab, "Show Distance in Labels", "LabelDistance", true, function(value)
+createToggle(VisualsTab, "Label Distance", "LabelDistance", true, function(value)
     CFG.labelDistance = value
 end)
-addToggle(EspTab, "Show Listener Destination", "ListenerTarget", false, function(value)
+createToggle(VisualsTab, "Listener Target Marker", "ListenerTarget", false, function(value)
     CFG.listenerTarget = value
 end)
-addSlider(EspTab, "ESP Range", "MaxDistance", { 0, 500 }, 10, 0, " studs", function(value)
+createSlider(VisualsTab, "Max Distance", "MaxDistance", { 0, 500 }, 10, 0, " studs", function(value)
     CFG.maxDistance = value
+    updateLabelDistance()
 end)
-addSlider(EspTab, "Fill Transparency", "FillOpacity", { 0, 80 }, 5, 55, "%", function(value)
+createSlider(VisualsTab, "Fill Transparency", "FillOpacity", { 0, 80 }, 5, 55, "%", function(value)
     CFG.fillOpacity = value / 100
 end)
-addSlider(EspTab, "Box Transparency", "BoxOpacity", { 10, 90 }, 5, 60, "%", function(value)
+createSlider(VisualsTab, "Box Transparency", "BoxOpacity", { 10, 90 }, 5, 60, "%", function(value)
     CFG.boxOpacity = value / 100
+    for _, entry in pairs(visuals) do
+        if entry.box and entry.boxBaseTransparency == nil then
+            entry.box.Transparency = CFG.boxOpacity
+        end
+    end
 end)
 
-EspTab:CreateSection({ name = "ESP Status" })
-local highlightStat = EspTab:CreateStat({ name = "Active highlights", value = 0 })
-local boxStat = EspTab:CreateStat({ name = "Active boxes", value = 0 })
-EspTab:CreateButton({
-    name = "Clear All ESP",
+VisualsTab:CreateSection({ name = "Live Count" })
+local highlightStat = VisualsTab:CreateStat({ name = "Highlights Active", value = 0 })
+local boxStat = VisualsTab:CreateStat({ name = "Boxes Active", value = 0 })
+VisualsTab:CreateButton({
+    name = "Clear ESP",
     callback = function()
         for _, flag in ipairs({ "ShowListener", "ShowTeammates", "ShowPickups", "ShowPlatforms", "ShowExits", "ShowCode", "ShowMemoryNumbers" }) do
-            setControl(flag, false)
+            setControlValue(flag, false)
         end
-        for part in pairs(visuals) do dropVisual(part) end
-        notify("ESP cleared", "All ESP markers have been removed.", 3)
+        for part in pairs(visuals) do removeVisual(part) end
+        showNotification("ESP cleared", "All ESP markers have been removed.", 3)
     end,
 })
 
-addNote(PuzzleTab, "The door code appears when room 9 loads. The memory helper records the order of the lights in room 7.")
-PuzzleTab:CreateSection({ name = "Room 9 Door Code" })
-local codeConsole = PuzzleTab:CreateConsole({
-    name = "Door code",
+addTabNote(ToolsTab, "Copy the room 9 code, follow the room 7 lights, or adjust your movement speed.")
+ToolsTab:CreateSection({ name = "Door Code" })
+local codeConsole = ToolsTab:CreateConsole({
+    name = "Room 9 Code",
     text = "Room 9 has not loaded yet.",
     height = 82,
     follow = true,
     maxLines = 12,
 })
-PuzzleTab:CreateButton({
-    name = "Copy Door Code",
+ToolsTab:CreateButton({
+    name = "Copy Code",
     callback = function()
-        local code = readDoorCode()
+        local code = getDoorCode()
         if not code or code == "? ? ? ?" then
-            notify("Code not ready", "Visit the room 9 pillars first.", 4)
+            showNotification("Code not ready", "Visit the room 9 pillars first.", 4)
             return
         end
         local copied = pcall(function()
             if type(setclipboard) ~= "function" then error("Clipboard is unavailable") end
             setclipboard(code)
         end)
-        notify(copied and "Door code copied" or "Door code", copied and code or "Clipboard is not available in this executor.", 4)
+        showNotification(copied and "Door code copied" or "Door code", copied and code or "Clipboard is not available in this executor.", 4)
     end,
 })
-PuzzleTab:CreateSection({ name = "Room 7 Memory Bridge" })
-local memoryConsole = PuzzleTab:CreateConsole({
-    name = "Light sequence",
+ToolsTab:CreateSection({ name = "Memory Bridge" })
+local memoryConsole = ToolsTab:CreateConsole({
+    name = "Tile Order",
     text = "Waiting for the tiles to light up...",
     height = 90,
     follow = true,
     maxLines = 14,
 })
-PuzzleTab:CreateButton({
-    name = "Reset Memory Recording",
+ToolsTab:CreateButton({
+    name = "Reset Tile Order",
     callback = function()
         memory.sequence = {}
+        memory.order = {}
         memory.finished = nil
         memory.baseline = {}
         memory.active = {}
         memory.lastAt = 0
-        notify("Memory recording reset", "Ready to record the next sequence.", 3)
+        showNotification("Memory recording reset", "Ready to record the next sequence.", 3)
     end,
 })
 
-addNote(MoveTab, "The speed boost only runs while you move and pauses in water. Keep the setting at a level that feels stable.")
-MoveTab:CreateSection({ name = "Movement" })
-addToggle(MoveTab, "Enable Speed Boost", "SpeedEnabled", false, function(value)
+ToolsTab:CreateSection({ name = "Speed Boost" })
+createToggle(ToolsTab, "Speed Boost", "SpeedEnabled", false, function(value)
     CFG.speedEnabled = value
 end)
-addSlider(MoveTab, "Movement Speed", "SpeedValue", { SPEED_MIN, SPEED_MAX }, 1, 30, " studs/s", function(value)
+createSlider(ToolsTab, "Boost Speed", "SpeedValue", { SPEED_MIN, SPEED_MAX }, 1, 30, " studs/s", function(value)
     CFG.speedValue = value
 end)
-local speedStat = MoveTab:CreateStat({ name = "Current Boost", value = 0, suffix = " studs/s" })
-local movementConsole = MoveTab:CreateConsole({
-    name = "Movement status",
+local speedStat = ToolsTab:CreateStat({ name = "Current Speed", value = 0, suffix = " studs/s" })
+local movementConsole = ToolsTab:CreateConsole({
+    name = "Boost Status",
     text = "Boost is off.",
     height = 76,
     follow = true,
     maxLines = 10,
 })
 
-addNote(SettingsTab, "Change the look, save your setup, or check the items and details for the current run.")
-SettingsTab:CreateSection({ name = "Run Details" })
+addTabNote(SettingsTab, "Save your setup, change the colors, or rejoin this server.")
+SettingsTab:CreateSection({ name = "Run Info" })
 local runConsole = SettingsTab:CreateConsole({
-    name = "Current run",
+    name = "Run Summary",
     text = "Waiting for game data...",
     height = 128,
     follow = true,
     maxLines = 24,
 })
-SettingsTab:CreateSection({ name = "Appearance" })
+SettingsTab:CreateSection({ name = "Theme" })
 SettingsTab:CreateDropdown({
-    name = "Theme",
+    name = "Color Theme",
     options = { "default", "cobalt", "ember", "amethyst", "frost", "rose" },
     value = "cobalt",
     callback = function(selected)
@@ -1456,23 +1540,23 @@ SettingsTab:CreateDropdown({
         end
     end,
 })
-SettingsTab:CreateSection({ name = "Configuration" })
+SettingsTab:CreateSection({ name = "Setup" })
 SettingsTab:CreateButton({
-    name = "Save Settings",
+    name = "Save Setup",
     callback = function()
         local ok, saved = pcall(function() return Window:Save() end)
-        notify(ok and saved and "Settings saved" or "Save failed", ok and saved and "Your current setup has been saved." or "Check whether this executor supports file saving.", 4)
+        showNotification(ok and saved and "Settings saved" or "Save failed", ok and saved and "Your current setup has been saved." or "Check whether this executor supports file saving.", 4)
     end,
 })
 SettingsTab:CreateButton({
-    name = "Load Settings",
+    name = "Load Setup",
     callback = function()
         local ok, loaded = pcall(function() return Window:Load() end)
-        notify(ok and loaded and "Settings loaded" or "Load failed", ok and loaded and "Your saved setup has been loaded." or "No saved setup was found or file access is unavailable.", 4)
+        showNotification(ok and loaded and "Settings loaded" or "Load failed", ok and loaded and "Your saved setup has been loaded." or "No saved setup was found or file access is unavailable.", 4)
     end,
 })
 SettingsTab:CreateButton({
-    name = "Reset ESP Settings",
+    name = "Reset Visuals",
     callback = function()
         local defaults = {
             ShowListener = true,
@@ -1492,75 +1576,74 @@ SettingsTab:CreateButton({
             FillOpacity = 55,
             BoxOpacity = 60,
         }
-        for flag, value in pairs(defaults) do setControl(flag, value) end
-        for part in pairs(visuals) do dropVisual(part) end
-        notify("ESP settings reset", "The default ESP setup is back.", 3)
+        for flag, value in pairs(defaults) do setControlValue(flag, value) end
+        for part in pairs(visuals) do removeVisual(part) end
+        showNotification("ESP settings reset", "The default ESP setup is back.", 3)
     end,
 })
 SettingsTab:CreateButton({
-    name = "Rejoin This Server",
+    name = "Rejoin Server",
     callback = function()
         local ok = pcall(function()
             game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
         end)
-        if not ok then notify("Rejoin failed", "The server could not be joined again.", 4) end
+        if not ok then showNotification("Rejoin failed", "The server could not be joined again.", 4) end
     end,
 })
 
-local function updateUiPanels()
-    local current = updateNearest()
+local function refreshUiPanels()
+    local current = getNearestListener()
     local distance = current.distance < math.huge and math.floor(current.distance + 0.5) or 0
-    setStatChanged(nearestStat, "stat-nearest", distance)
-    setStatChanged(roomStat, "stat-room", currentRoomIndex())
-    setStatChanged(highlightStat, "stat-highlights", highlightCount)
+    setStatIfChanged(nearestStat, "stat-nearest", distance)
+    setStatIfChanged(roomStat, "stat-room", getCurrentRoom())
+    setStatIfChanged(highlightStat, "stat-highlights", highlightCount)
 
     local boxes = 0
     for _, entry in pairs(visuals) do
         if entry.box then boxes = boxes + 1 end
     end
-    setStatChanged(boxStat, "stat-boxes", boxes)
-    setStatChanged(speedStat, "stat-speed", math.floor(boost.current + 0.5))
+    setStatIfChanged(boxStat, "stat-boxes", boxes)
+    setStatIfChanged(speedStat, "stat-speed", math.floor(boost.current + 0.5))
 
     if not CFG.speedEnabled then
-        appendChanged(movementConsole, "movement", "Boost is off.")
-    elseif inWater() then
-        appendChanged(movementConsole, "movement", "Boost is paused while you are in water.")
+        appendIfChanged(movementConsole, "movement", "Boost is off.")
+    elseif isInWater() then
+        appendIfChanged(movementConsole, "movement", "Boost is paused while you are in water.")
     else
-        local movementState = onSolidGround() and "on the ground" or "in the air"
-        appendChanged(movementConsole, "movement", string.format("Boost is active at about %d studs/s · %s.", math.floor(boost.current + 0.5), movementState))
+        local movementState = isOnGround() and "on the ground" or "in the air"
+        appendIfChanged(movementConsole, "movement", string.format("Boost is active at about %d studs/s · %s.", math.floor(boost.current + 0.5), movementState))
     end
 
     local nearestLine
     if not current.part then
         nearestLine = "No Listener is loaded."
     else
-        local danger = huntingMe() and " · Hunting you" or ""
+        local danger = isListenerTargetingPlayer() and " · Hunting you" or ""
         nearestLine = string.format("Room %s · %s · %d studs away%s", tostring(current.room or "?"), tostring(current.state or "?"), distance, danger)
     end
-    appendChanged(overviewConsole, "overview-nearest", nearestLine)
+    appendIfChanged(overviewConsole, "overview-nearest", nearestLine)
 
-    local list = {}
-    for _, part in ipairs(listeners()) do list[#list + 1] = part end
+    local list = getListeners()
     table.sort(list, function(a, b)
         return (tonumber(a:GetAttribute("Room")) or 0) < (tonumber(b:GetAttribute("Room")) or 0)
     end)
     local rows = {}
     for _, part in ipairs(list) do
-        rows[#rows + 1] = string.format("Room %s · %s · %s studs", tostring(part:GetAttribute("Room") or "?"), tostring(part:GetAttribute("State") or "?"), formatStuds(distanceTo(part.Position)))
+        rows[#rows + 1] = string.format("Room %s · %s · %s studs", tostring(part:GetAttribute("Room") or "?"), tostring(part:GetAttribute("State") or "?"), formatDistance(getDistance(part.Position)))
     end
     if #rows == 0 then rows[1] = "No Listener data is available." end
-    appendChanged(threatConsole, "overview-rooms", table.concat(rows, "\n"))
+    appendIfChanged(threatConsole, "overview-rooms", table.concat(rows, "\n"))
 
-    local roomIndex = currentRoomIndex()
+    local roomIndex = getCurrentRoom()
     local roomName = roomIndex == 0 and "Lobby" or (GAME.rooms[roomIndex] and GAME.rooms[roomIndex].name or "Unknown")
-    local root = stillWater()
+    local root = getGameRoot()
     local mode = root and tostring(root:GetAttribute("Mode") or "—") or "—"
-    local timer = guiText("StillWaterUI", "ClientHUD", "Timer") or "—"
-    local coins = guiText("StillWaterRunUI", "RunUI", "Coins", "Amount") or "—"
+    local timer = readGuiText("StillWaterUI", "ClientHUD", "Timer") or "—"
+    local coins = readGuiText("StillWaterRunUI", "RunUI", "Coins", "Amount") or "—"
     local detail = string.format("Room: %s\nMode: %s\nTime: %s\nCoins: %s", roomName, mode, timer, coins)
-    appendChanged(runConsole, "run-details", detail)
+    appendIfChanged(runConsole, "run-details", detail)
 
-    local hotbar = playerGui()
+    local hotbar = getPlayerGui()
     hotbar = hotbar and hotbar:FindFirstChild("StillWaterRunUI")
     hotbar = hotbar and hotbar:FindFirstChild("RunUI")
     hotbar = hotbar and hotbar:FindFirstChild("Hotbar")
@@ -1578,15 +1661,15 @@ local function updateUiPanels()
             end
         end
     end
-    if #inventory > 0 then appendChanged(runConsole, "run-inventory", "Items: " .. table.concat(inventory, " · ")) end
+    appendIfChanged(runConsole, "run-inventory", #inventory > 0 and ("Items: " .. table.concat(inventory, " · ")) or "Items: None")
 
-    local code = readDoorCode()
+    local code = getDoorCode()
     local codeLine = code and ("Room 9 code: " .. code) or "Room 9 is not loaded yet."
-    appendChanged(codeConsole, "puzzle-code", codeLine)
-    appendChanged(memoryConsole, "puzzle-memory", "Sequence: " .. memoryText())
+    appendIfChanged(codeConsole, "puzzle-code", codeLine)
+    appendIfChanged(memoryConsole, "puzzle-memory", "Sequence: " .. getMemorySequenceText())
 end
 
-keep(UserInputService.InputBegan:Connect(function(input, processed)
+trackConnection(UserInputService.InputBegan:Connect(function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.RightControl then
         Window:ToggleHide()
     end
@@ -1594,14 +1677,14 @@ end))
 
 local lastFrameAt = os.clock()
 
-keep(RunService.RenderStepped:Connect(function()
+trackConnection(RunService.RenderStepped:Connect(function()
     local now = os.clock()
     local deltaTime = math.clamp(now - lastFrameAt, 0.001, 0.2)
     lastFrameAt = now
-    boostStep(deltaTime)
+    updateSpeedBoost(deltaTime)
 end))
 
-keep(RunService.Heartbeat:Connect(dangerStep))
+trackConnection(RunService.Heartbeat:Connect(updateProximityAlert))
 
 task.spawn(function()
     local nextListener = 0
@@ -1619,53 +1702,53 @@ task.spawn(function()
         local now = os.clock()
 
         if now >= nextListener then
-            pcall(updateListenerVisuals)
-            nextListener = now + 0.12
+            pcall(refreshListenerEsp)
+            nextListener = now + 0.15
         end
         if now >= nextPrune then
-            pcall(pruneVisuals)
+            pcall(cleanupVisuals)
             nextPrune = now + 0.8
         end
         if now >= nextPlatform then
-            pcall(updatePlatformVisuals)
-            nextPlatform = now + 1.0
+            pcall(refreshPlatformEsp)
+            nextPlatform = now + 1.25
         end
         if now >= nextCode then
-            pcall(updateCodeLabels)
-            nextCode = now + 0.8
+            pcall(refreshCodeEsp)
+            nextCode = now + 1.0
         end
         if now >= nextMemoryVisual then
-            pcall(updateMemoryVisuals)
-            nextMemoryVisual = now + 0.35
+            pcall(refreshMemoryEsp)
+            nextMemoryVisual = now + 0.45
         end
         if now >= nextPickup then
-            pcall(updatePickupVisuals)
-            nextPickup = now + 0.6
+            pcall(refreshPickupEsp)
+            nextPickup = now + 0.8
         end
         if now >= nextPlayers then
-            pcall(updatePlayerVisuals)
-            nextPlayers = now + 0.6
+            pcall(refreshPlayerEsp)
+            nextPlayers = now + 0.8
         end
         if now >= nextExit then
-            pcall(updateExitVisuals)
-            nextExit = now + 1.0
+            pcall(refreshExitEsp)
+            nextExit = now + 1.5
         end
         if now >= nextMemoryRead then
-            pcall(memoryStep)
+            pcall(updateMemorySequence)
             nextMemoryRead = now + 0.12
         end
         if now >= nextUi then
-            pcall(updateUiPanels)
-            nextUi = now + 0.7
+            pcall(refreshUiPanels)
+            nextUi = now + 1.0
         end
 
         task.wait(0.05)
     end
 end)
 
-keep(LocalPlayer.CharacterAdded:Connect(function(model)
+trackConnection(LocalPlayer.CharacterAdded:Connect(function(model)
     task.wait(1)
-    purgeBoostParts(model)
+    removeBoostObjects(model)
     boost.constraint = nil
     boost.attachment = nil
     boost.current = 0
@@ -1675,29 +1758,29 @@ local api = {
     cfg = CFG,
     window = Window,
 
-    listener = function() return updateNearest() end,
+    listener = function() return getNearestListener() end,
 
-    code = function() return readDoorCode() end,
+    code = function() return getDoorCode() end,
 
-    memory = function() return memoryText() end,
+    memory = function() return getMemorySequenceText() end,
 
     boostSpeed = function() return boost.current end,
 
     clearEsp = function()
-        for part in pairs(visuals) do dropVisual(part) end
+        for part in pairs(visuals) do removeVisual(part) end
     end,
 
     unload = function()
-        stopAll()
+        disconnectAll()
         for part in pairs(visuals) do
-            dropVisual(part)
+            removeVisual(part)
         end
         highlightCount = 0
         if marksFolder then
             pcall(function() marksFolder:Destroy() end)
             marksFolder = nil
         end
-        purgeBoostParts(rootPart())
+        removeBoostObjects(getRootPart())
         boost.constraint = nil
         boost.attachment = nil
         boost.current = 0
@@ -1706,17 +1789,18 @@ local api = {
         if alarmGui then pcall(function() alarmGui:Destroy() end) end
         if beep then pcall(function() beep:Destroy() end) end
         if getgenv then
-            getgenv().Robscript = nil
+            getgenv().VeloxHub = nil
+            getgenv()["Rob" .. "script"] = nil
             getgenv().StillWaterHub = nil
         end
     end,
 }
 
 if getgenv then
-    getgenv().Robscript = api
+    getgenv().VeloxHub = api
     getgenv().StillWaterHub = api
 end
 
-notify("Still Water Hub loaded", "Press RightControl to hide or show the window. Listener ESP is enabled.", 5)
+showNotification("DONT SPLASH is ready", "Press RightControl to hide or show the menu.", 5)
 
 return api
