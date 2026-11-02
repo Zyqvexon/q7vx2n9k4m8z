@@ -1,5 +1,3 @@
--- REUSABLE UI TEMPLATE
--- SERVICES
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -11,7 +9,7 @@ local RuntimeEnv = type(getgenv) == "function" and getgenv() or _G
 local deployver = "Deploy ver 1.47"
 local displayVersion = "v" .. (string.match(deployver, "[%d%.]+") or "1.86")
 local RayfieldWindow
-local PreviousRuntimeCleanup = RuntimeEnv.__StealAPetAndRideItCleanup
+local PreviousRuntimeCleanup = RuntimeEnv.__VeloxHubSAPARICleanup or RuntimeEnv.__StealAPetAndRideItCleanup
 if type(PreviousRuntimeCleanup) == "function" then
     pcall(PreviousRuntimeCleanup)
 end
@@ -55,14 +53,16 @@ RuntimeEnv.__StealAPetAndRideItCleanup = function()
         end
     end)
 end
+RuntimeEnv.__VeloxHubSAPARICleanup = RuntimeEnv.__StealAPetAndRideItCleanup
 
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 RayfieldWindow = Rayfield:CreateWindow({
-    name = "Steal a Pet & Ride It",
-    subtitle = "Automation and settings",
+    name = "[🎃] Steal A Pet And Ride It!",
+    subtitle = "VeloxHub",
     theme = "cobalt",
     sidebarLayout = true,
-    showName = "SAPARI",
+    profile = "By Ovei",
+    showName = "VeloxHub",
     configuration = {
         autoSave = true,
         autoLoad = false,
@@ -70,10 +70,32 @@ RayfieldWindow = Rayfield:CreateWindow({
         customFolder = "SAPARI"
     }
 })
--- UI CONFIGURATION
+
+local NotificationTimes = {}
+local function NotifyUser(key, title, content, duration, cooldown)
+    if Runtime.ConfigurationLoading or not RayfieldWindow or RayfieldWindow.unloaded then
+        return false
+    end
+    local now = os.clock()
+    local waitTime = cooldown or 8
+    if NotificationTimes[key] and now - NotificationTimes[key] < waitTime then
+        return false
+    end
+    NotificationTimes[key] = now
+    local ok = pcall(function()
+        RayfieldWindow:Notify({
+            title = title,
+            content = content,
+            duration = duration or 4
+        })
+    end)
+    return ok
+end
+Runtime.Notify = NotifyUser
+
 local UIConfig = {
-    Title = "MoldyHub",
-    Subtitle = "Steal a pet and ride it",
+    Title = "VeloxHub",
+    Subtitle = "[🎃] Steal A Pet And Ride It! • By Ovei",
     Version = deployver,
     Width = 480,
     Height = 320,
@@ -84,7 +106,7 @@ local UIConfig = {
         "Settings"
     }
 }
--- THEME
+
 local Theme = {
     Background = Color3.fromRGB(5, 5, 7),
     Sidebar = Color3.fromRGB(10, 10, 12),
@@ -100,7 +122,7 @@ local Theme = {
     Accent = Color3.fromRGB(255, 181, 55),
     AccentText = Color3.fromRGB(35, 21, 3)
 }
--- HELPER FUNCTIONS
+
 local function Create(className, properties)
     local object = Instance.new(className)
     for property, value in pairs(properties or {}) do
@@ -132,14 +154,14 @@ local function Tween(object, properties, duration)
         properties
     ):Play()
 end
--- REMOVE ANY LEFTOVER UI FROM A PREVIOUS RUN
+
 pcall(function()
     for _, uiName in ipairs({ "SAPARI_LegacyUI", "StealAPetAndRideItUI" }) do
         local oldUI = game.CoreGui:FindFirstChild(uiName)
         if oldUI then oldUI:Destroy() end
     end
 end)
--- THEME PRESETS
+
 local ThemePresets = {
     ["Midnight Blue + Cyan"] = {
         Background = Color3.fromRGB(16, 24, 32),
@@ -294,7 +316,7 @@ local ThemePresets = {
 }
 Theme = ThemePresets["Black + Electric Blue"]
 local ActiveThemeName = "Black + Electric Blue"
--- SCREEN GUI
+
 local ScreenGui = Create("ScreenGui", {
     Name = "SAPARI_LegacyUI",
     Parent = game.CoreGui,
@@ -334,10 +356,10 @@ local function ApplyTheme(themeName)
     end
     local titleLabel = ScreenGui:FindFirstChild("Title", true)
     if titleLabel and titleLabel:IsA("TextLabel") then
-        titleLabel.Text = '<font color="#' .. selectedTheme.Accent:ToHex() .. '">Moldy</font>Hub <font face="Gotham" size="9" color="#' .. selectedTheme.Accent:ToHex() .. '">' .. displayVersion .. '</font>'
+        titleLabel.Text = '<font color="#' .. selectedTheme.Accent:ToHex() .. '">Velox</font>Hub <font face="Gotham" size="9" color="#' .. selectedTheme.Accent:ToHex() .. '">' .. displayVersion .. '</font>'
     end
 end
--- MAIN WINDOW
+
 local Main = Create("Frame", {
     Name = "Main",
     Parent = ScreenGui,
@@ -361,7 +383,7 @@ local UIScale = Create("UIScale", {
     Parent = Main,
     Scale = 1
 })
--- TOP BAR
+
 local TopBar = Create("Frame", {
     Name = "TopBar",
     Parent = Main,
@@ -376,7 +398,7 @@ local Title = Create("TextLabel", {
     Position = UDim2.fromOffset(14, 0),
     Size = UDim2.new(1, -100, 1, 0),
     BackgroundTransparency = 1,
-    Text = '<font color="#' .. Theme.Accent:ToHex() .. '">Moldy</font>Hub <font face="Gotham" size="9" color="#' .. Theme.Accent:ToHex() .. '">' .. displayVersion .. '</font>',
+    Text = '<font color="#' .. Theme.Accent:ToHex() .. '">Velox</font>Hub <font face="Gotham" size="9" color="#' .. Theme.Accent:ToHex() .. '">' .. displayVersion .. '</font>',
     RichText = true,
     TextColor3 = Theme.Text,
     Font = Enum.Font.GothamBold,
@@ -384,7 +406,7 @@ local Title = Create("TextLabel", {
     TextXAlignment = Enum.TextXAlignment.Left,
     TextYAlignment = Enum.TextYAlignment.Center
 })
--- Minimize
+
 local MinimizeButton = Create("TextButton", {
     Name = "Minimize",
     Parent = TopBar,
@@ -399,7 +421,7 @@ local MinimizeButton = Create("TextButton", {
 })
 AddCorner(MinimizeButton, 8)
 AddStroke(MinimizeButton, Theme.Border, 1)
--- Close
+
 local CloseButton = Create("TextButton", {
     Name = "Close",
     Parent = TopBar,
@@ -430,7 +452,7 @@ local RestoreButton = Create("TextButton", {
 })
 AddCorner(RestoreButton, 18)
 AddStroke(RestoreButton, Theme.Border, 1)
--- HORIZONTAL NAVIGATION
+
 local NavigationBar = Create("Frame", {
     Name = "NavigationBar",
     Parent = Main,
@@ -459,7 +481,7 @@ Create("UIListLayout", {
     SortOrder = Enum.SortOrder.LayoutOrder,
     VerticalAlignment = Enum.VerticalAlignment.Center
 })
--- CONTENT AREA
+
 local Content = Create("Frame", {
     Name = "Content",
     Parent = Main,
@@ -468,7 +490,7 @@ local Content = Create("Frame", {
     BackgroundColor3 = Theme.Background,
     BorderSizePixel = 0
 })
--- PAGE SYSTEM
+
 local Pages = {}
 local SidebarButtons = {}
 local RayfieldTabs = {}
@@ -572,7 +594,7 @@ local function CreatePage(pageNumber, pageName)
     Pages[pageNumber] = PageClip
     return Page
 end
--- CARD
+
 local function CreateCard(parent, title, description)
     if CurrentRayfieldTab and title ~= "Status" then
         CurrentRayfieldTab:CreateSection({ name = title })
@@ -698,7 +720,7 @@ local function CreateSlider(parent, text, minimum, maximum, default, callback)
     })
     return { Handle = handle }
 end
--- CREATE HORIZONTAL NAVIGATION BUTTONS
+
 for index, name in ipairs(UIConfig.SidebarNames) do
     local Button = Create("TextButton", {
         Name = "NavigationButton_" .. index,
@@ -740,7 +762,6 @@ for index, name in ipairs(UIConfig.SidebarNames) do
     end))
 end
 
--- CREATE TEMPLATE PAGES
 for index, name in ipairs(UIConfig.SidebarNames) do
     local Page = CreatePage(index, name)
     if name == "Main" then
@@ -790,6 +811,7 @@ for index, name in ipairs(UIConfig.SidebarNames) do
                     if controller then
                         controller.SetEnabled(false, false)
                     end
+                    NotifyUser("autosteal-boss-busy", "Boss event in progress", "Auto Steal is paused while the boss event is using movement. Try again when it finishes.", 5, 10)
                 else
                     Runtime.BossResumeAutoSteal = false
                 end
@@ -810,6 +832,7 @@ for index, name in ipairs(UIConfig.SidebarNames) do
                 if AutoStealStatusDot then
                     AutoStealStatusDot.BackgroundColor3 = Color3.fromRGB(255, 190, 80)
                 end
+                NotifyUser("ride-pet-required", "Ride a pet first", "Get on your pet before turning on Auto Steal.", 5, 5)
                 return
             end
 
@@ -827,6 +850,7 @@ for index, name in ipairs(UIConfig.SidebarNames) do
                 if AutoStealStatusDot then
                     AutoStealStatusDot.BackgroundColor3 = Color3.fromRGB(255, 190, 80)
                 end
+                NotifyUser("filter-required", "Choose a filter first", "Select at least one world path or cage rarity, then try again.", 5, 5)
                 return
             end
 
@@ -840,9 +864,11 @@ for index, name in ipairs(UIConfig.SidebarNames) do
                 AutoStealStatusDot.BackgroundColor3 = enabled and Color3.fromRGB(75, 190, 145) or Theme.Gray
             end
             if enabled and Runtime.StartNavigation then
+                NotifyUser("autosteal-started", "Auto Steal started", "I’ll look for cages that match your selected paths and rarities.", 4, 4)
                 task.spawn(Runtime.StartNavigation)
             elseif not enabled and Runtime.StopNavigation then
                 Runtime.StopNavigation()
+                NotifyUser("autosteal-stopped", "Auto Steal stopped", "Cage scanning and movement have been stopped.", 4, 2)
             end
         end)
         AutoStealToggle.Position = UDim2.new(1, -55, 0, 9)
@@ -1732,9 +1758,19 @@ end))
         end
 
         local function SetNavigationStatus(message)
-            if StatusValue then
+            if StatusValue and StatusValue.Text ~= message then
                 StatusValue.Text = message
                 StatusValue.TextColor3 = Theme.Accent
+            end
+            local lower = string.lower(tostring(message or ""))
+            if lower:find("world paths unavailable", 1, true) then
+                NotifyUser("world-paths-missing", "World paths not ready", "The current world paths could not be found. Check that the game finished loading.", 5, 15)
+            elseif lower:find("recovery timed out", 1, true) or lower:find("ride a pet again", 1, true) then
+                NotifyUser("pet-recovery-required", "Ride your pet again", "The ride was lost during recovery. Get back on your pet before restarting Auto Steal.", 5, 15)
+            elseif lower:find("failed to reach safe zone", 1, true) or lower:find("return to safe zone failed", 1, true) then
+                NotifyUser("safe-zone-failed", "Could not reach the safe zone", "Auto Steal stopped because it could not return safely. Check your character position and try again.", 5, 15)
+            elseif lower:find("boss navigation failed", 1, true) or lower:find("movement unavailable", 1, true) then
+                NotifyUser("boss-movement-failed", "Boss movement unavailable", "The boss route could not start. Check that your character and event area are ready.", 5, 15)
             end
         end
         Runtime.SetMainActivity = SetNavigationStatus
@@ -1746,6 +1782,7 @@ end))
                     AutoStealStatusValue.Text = "Select at least 1 filter"
                     AutoStealStatusValue.TextColor3 = Color3.fromRGB(255, 190, 80)
                 end
+                NotifyUser("filter-required", "Choose a filter first", "Select at least one world path or cage rarity, then try again.", 5, 5)
             end
 
             AutoStealEnabled = enabled
@@ -2362,6 +2399,7 @@ end))
             if not safeSign or not safeSign:IsA("BasePart")
             or not worldFolder or not pathsFolder then
                 SetNavigationStatus("World paths unavailable")
+                NotifyUser("world-paths-missing", "World paths not ready", "The current world is still loading or its path folder is missing. Wait for the map to load, then try again.", 5, 15)
                 SetAutoStealEnabled(false)
                 return
             end
@@ -3493,8 +3531,12 @@ end))
                     if enabled and not AutoStealEnabled
                     and not Runtime.BossMovementActive and Runtime.StartTreadmillIdle then
                         Runtime.StartTreadmillIdle()
+                        NotifyUser("treadmill-enabled", "Auto Treadmill enabled", "I’ll use the treadmill while Auto Steal is idle.", 4, 4)
+                    elseif enabled and AutoStealEnabled then
+                        NotifyUser("treadmill-waits", "Auto Treadmill waiting", "It will take over when Auto Steal is stopped.", 4, 4)
                     elseif not enabled and Runtime.StopTreadmillIdle then
                         Runtime.StopTreadmillIdle()
+                        NotifyUser("treadmill-disabled", "Auto Treadmill stopped", "Treadmill movement has been stopped.", 4, 2)
                     end
                 else
                     StatusValue.Text = enabled and "Enabled" or "Disabled"
@@ -3525,6 +3567,7 @@ end))
                     local tapBoostRemote = remotes and remotes:FindFirstChild("TapBoost")
 
                     if not tapBoostRemote or not tapBoostRemote:IsA("RemoteEvent") then
+                        NotifyUser("tap-boost-unavailable", "Tap Boost unavailable", "This server does not have the Tap Boost event right now.", 4, 20)
                         return
                     end
 
@@ -3670,6 +3713,13 @@ end))
                 if AutoStealStatusDot then
                     AutoStealStatusDot.BackgroundColor3 = Color3.fromRGB(255, 190, 80)
                 end
+                if not HasSelectedFilter() then
+                    NotifyUser("restore-filter-required", "Auto Steal was not started", "Your saved settings need at least one world path or cage rarity. Choose a filter and enable Auto Steal again.", 6, 3)
+                elseif not (Runtime.IsRidingPet and Runtime.IsRidingPet()) then
+                    NotifyUser("restore-ride-required", "Ride a pet first", "Your saved Auto Steal setting was not started because you are not riding a pet.", 6, 3)
+                else
+                    NotifyUser("restore-autosteal-unavailable", "Auto Steal could not start", "The character or navigation system is not ready yet. Try again in a moment.", 6, 5)
+                end
             end
         end
     elseif name == "Events" then
@@ -3735,6 +3785,7 @@ end))
         local WaveResultConnection
 
         local function SetBossStatus(status)
+            if BossStatusValue.Text == status then return end
             BossStatusValue.Text = status
             if status == "Disabled" then
                 BossStatusValue.TextColor3 = Theme.Gray
@@ -3777,6 +3828,7 @@ end))
 
             BossRoutineRunning = true
             BossFightEnded = false
+            NotifyUser("boss-found", "Boss event found", "Moving to the Candy Pumpkin now.", 4, 12)
             BossRoutineToken += 1
             local token = BossRoutineToken
 
@@ -3894,6 +3946,7 @@ end))
                     end
 
                     SetBossStatus("WaveMobs / WaveResult unavailable - retrying")
+                    NotifyUser("boss-signals-missing", "Boss event is not ready", "I can’t find the boss event signals yet. I’ll keep checking.", 5, 20)
                     task.wait(5)
                 end
             end)
@@ -3909,10 +3962,12 @@ end))
             AutoFightBossEnabled = enabled
             if enabled then
                 SetBossStatus("Waiting")
+                NotifyUser("boss-helper-enabled", "Boss helper enabled", "I’ll wait for the Candy Pumpkin event.", 4, 4)
                 ConnectBossListeners()
             else
                 DisconnectBossListeners()
                 StopBossRoutine()
+                NotifyUser("boss-helper-disabled", "Boss helper stopped", "Boss movement and attack checks have stopped.", 4, 2)
             end
         end)
         AutoFightBossToggle.Position = UDim2.fromOffset(11, 54)
@@ -3971,6 +4026,7 @@ end))
         })
         local AntiAFKToggle = CreateToggle(AntiAFKCard, "Enable Anti AFK", true, function(enabled)
             if enabled then
+                NotifyUser("anti-afk-enabled", "Anti AFK enabled", "I’ll help keep you from being marked idle while the hub is running.", 4, 4)
                 if antiAFKConnection and antiAFKConnection.Connected then
                     antiAFKConnection:Disconnect()
                 end
@@ -4050,8 +4106,8 @@ end))
         })
         CurrentRayfieldTab:CreateSection({ name = "About" })
         CurrentRayfieldTab:CreateText({
-            name = "Steal a Pet & Ride It",
-            text = "SAPARI tools and automation. Configuration is saved in the SAPARI folder."
+            name = "VeloxHub",
+            text = "[🎃] Steal A Pet And Ride It! by Ovei. Your settings are saved in the SAPARI folder."
         })
     end
 end
@@ -4063,3 +4119,4 @@ if Runtime.FinalizeAutoStealRestore then
 end
 
 RayfieldWindow:CreateTag({ text = displayVersion, color = Color3.fromRGB(56, 140, 255) })
+NotifyUser("hub-ready", "VeloxHub ready", "Ride a pet, choose at least one world path or cage rarity, then turn on Auto Steal.", 6, 0)
