@@ -339,26 +339,64 @@ local function GetEnemyPadsFolder()
     return workspace:FindFirstChild("EnemyPads", true)
 end
 
+local SortedPadsCacheFolder = nil
+local SortedPadsCacheTime = 0
+local SortedPadsCache = {}
+local PAD_CACHE_TTL = 0.25
+
 local function GetSortedPads()
     local folder = GetEnemyPadsFolder()
-    if not folder then return {} end
+    if not folder then
+        SortedPadsCacheFolder = nil
+        table.clear(SortedPadsCache)
+        return SortedPadsCache
+    end
+
+    local now = os.clock()
+    if folder == SortedPadsCacheFolder and now - SortedPadsCacheTime < PAD_CACHE_TTL then
+        return SortedPadsCache
+    end
+
     local pads = {}
     for _, pad in ipairs(folder:GetChildren()) do
         local id = tonumber(pad.Name)
         local cf = pad:GetAttribute("PadCFrame")
         if id and typeof(cf) == "CFrame" then
-            table.insert(pads, { id = id, cframe = cf, instance = pad })
+            pads[#pads + 1] = { id = id, cframe = cf, instance = pad }
         elseif id and pad:IsA("BasePart") then
-            table.insert(pads, { id = id, cframe = pad.CFrame, instance = pad })
+            pads[#pads + 1] = { id = id, cframe = pad.CFrame, instance = pad }
         end
     end
     table.sort(pads, function(a, b) return a.id < b.id end)
-    return pads
+
+    SortedPadsCacheFolder = folder
+    SortedPadsCacheTime = now
+    SortedPadsCache = pads
+    return SortedPadsCache
 end
+
+local ActiveEnemyCacheFolder = nil
+local ActiveEnemyCacheFilter = nil
+local ActiveEnemyCacheBosses = nil
+local ActiveEnemyCacheTime = 0
+local ActiveEnemyCacheResults = {}
+local ENEMY_CACHE_TTL = 0.05
 
 local function GetActiveEnemies(filterZones)
     local folder = workspace:FindFirstChild("Enemies")
-    if not folder then return {} end
+    if not folder then
+        ActiveEnemyCacheFolder = nil
+        table.clear(ActiveEnemyCacheResults)
+        return ActiveEnemyCacheResults
+    end
+
+    local now = os.clock()
+    if folder == ActiveEnemyCacheFolder
+        and filterZones == ActiveEnemyCacheFilter
+        and State.KillBosses == ActiveEnemyCacheBosses
+        and now - ActiveEnemyCacheTime < ENEMY_CACHE_TTL then
+        return ActiveEnemyCacheResults
+    end
 
     local zoneLookup = nil
     if filterZones and #filterZones > 0 then
@@ -402,7 +440,13 @@ local function GetActiveEnemies(filterZones)
     table.sort(results, function(a, b)
         return (tonumber(a.padId) or 9999) < (tonumber(b.padId) or 9999)
     end)
-    return results
+
+    ActiveEnemyCacheFolder = folder
+    ActiveEnemyCacheFilter = filterZones
+    ActiveEnemyCacheBosses = State.KillBosses
+    ActiveEnemyCacheTime = now
+    ActiveEnemyCacheResults = results
+    return ActiveEnemyCacheResults
 end
 
 local function GetLocalPlayerBaseBestPrompt()
@@ -879,7 +923,8 @@ TrackConnection(RunService.Stepped:Connect(function()
     for i = #NoclipParts, 1, -1 do
         local part = NoclipParts[i]
         if not part or not part.Parent then
-            table.remove(NoclipParts, i)
+            NoclipParts[i] = NoclipParts[#NoclipParts]
+            NoclipParts[#NoclipParts] = nil
         elseif part.CanCollide then
             part.CanCollide = false
         end
@@ -947,15 +992,6 @@ if Rayfield then
 end
 
 if Window then
-    pcall(function()
-        Window:CreateTag({
-            text = "VELOXHUB",
-            title = "by Ovei",
-            icon = "zap",
-            color = Color3.fromRGB(245, 158, 11),
-        })
-    end)
-
     local FarmTab = Window:CreateTab({ name = "Farm", icon = "swords" })
     local WorldTab = Window:CreateTab({ name = "World", icon = "map" })
     local InventoryTab = Window:CreateTab({ name = "Inventory", icon = "package" })
