@@ -1,5 +1,7 @@
--- Survive Your Ideas | Rayfield Gen2
--- Standalone version: no external module wrapper or context required.
+-- Surve Your Ideas | VeloxHub
+-- Author: Ovei
+-- Interface: Rayfield Gen2
+-- Standalone build.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -43,10 +45,10 @@ local function logOnce(key, message, level)
 		return
 	end
 	loggedOnce[key] = true
-	logMessage("[SYI] " .. message, level or "info")
+	logMessage("[VeloxHub] " .. message, level or "info")
 end
 
-logMessage("[SYI] module loaded", "info")
+logMessage("[VeloxHub] Surve Your Ideas by Ovei loaded", "info")
 
 local Settings = {
 	SpeedOn = false,
@@ -87,7 +89,7 @@ local Settings = {
 ---------------------------------------------------------------------
 
 local overlay = Instance.new("ScreenGui")
-overlay.Name = "Sk8rneSYI"
+overlay.Name = "VeloxHub_SurviveIdeas"
 overlay.ResetOnSpawn = false
 overlay.IgnoreGuiInset = true
 overlay.Parent = LocalPlayer:WaitForChild("PlayerGui")
@@ -106,7 +108,7 @@ end
 
 local function createEsp(instance, part, color, text)
 	local gui = Instance.new("BillboardGui")
-	gui.Name = "Sk8rneEsp"
+	gui.Name = "VeloxHub_ESP"
 	gui.Size = UDim2.fromOffset(190, 44)
 	gui.StudsOffset = Vector3.new(0, 4, 0)
 	gui.AlwaysOnTop = true
@@ -124,7 +126,7 @@ local function createEsp(instance, part, color, text)
 	label.Parent = gui
 
 	local highlight = Instance.new("Highlight")
-	highlight.Name = "Sk8rneEspHighlight"
+	highlight.Name = "VeloxHub_ESPHighlight"
 	highlight.Adornee = instance
 	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	highlight.FillColor = color
@@ -442,7 +444,7 @@ local function hazardStep()
 				local distance = (part.Position - myRoot.Position).Magnitude
 				if distance <= 120 and not warnedHazards[tag] then
 					warnedHazards[tag] = true
-					logMessage(string.format("[SYI] HAZARD: %s is %.0f studs away", tag, distance), "warn")
+					logMessage(string.format("[VeloxHub] HAZARD: %s is %.0f studs away", tag, distance), "warn")
 				end
 				if Settings.AutoDodge and humanoid and distance <= 60 then
 					local away = myRoot.Position - part.Position
@@ -484,7 +486,7 @@ local function unlimitedStaminaStep()
 		lastStaminaLog = now
 		logMessage(
 			string.format(
-				"[SYI] stamina debug: before=%s after=%s sprinting=%s drainMul=%s fired=%s",
+				"[VeloxHub] stamina debug: before=%s after=%s sprinting=%s drainMul=%s fired=%s",
 				tostring(before),
 				tostring(after),
 				tostring(sprinting),
@@ -507,7 +509,7 @@ local function unlimitedOxygenStep()
 	end)
 	if now - lastBreathLog >= 2 then
 		lastBreathLog = now
-		logMessage(string.format("[SYI] oxygen debug: breath=%s", isNumber and tostring(math.floor(breath)) or "nil"), "info")
+		logMessage(string.format("[VeloxHub] oxygen debug: breath=%s", isNumber and tostring(math.floor(breath)) or "nil"), "info")
 	end
 	logOnce("oxygen_ok", "unlimited oxygen: keeping breath full", "info")
 end
@@ -549,10 +551,10 @@ task.spawn(function()
 		end
 		return table.concat(list, ", ")
 	end
-	logMessage("[SYI] MetaWords.Remotes: " .. names(metaRemotes), "info")
-	logMessage("[SYI] WriterRemotes: " .. names(writerRemotes), "info")
-	logMessage("[SYI] SprintRemotes: " .. names(sprintRemotes), "info")
-	logMessage("[SYI] Items.Remotes: " .. names(itemsRemotes), "info")
+	logMessage("[VeloxHub] MetaWords.Remotes: " .. names(metaRemotes), "info")
+	logMessage("[VeloxHub] WriterRemotes: " .. names(writerRemotes), "info")
+	logMessage("[VeloxHub] SprintRemotes: " .. names(sprintRemotes), "info")
+	logMessage("[VeloxHub] Items.Remotes: " .. names(itemsRemotes), "info")
 end)
 
 -- Every word in the game's DiaryCatalog (416 entries).
@@ -860,13 +862,13 @@ end
 
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 local window = Rayfield:CreateWindow({
-    name = "Survive Your Ideas",
-    subtitle = "SYI | Rayfield Gen2",
+    name = "Surve Your Ideas",
+    subtitle = "VeloxHub | by Ovei",
     sidebarLayout = true,
     configuration = {
         autoSave = true,
         autoLoad = false,
-        fileName = "SurviveYourIdeas_Gen2",
+        fileName = "VeloxHub_SurveYourIdeas",
     },
 })
 
@@ -881,7 +883,6 @@ local System = window:CreateTab({ name = "System", icon = "settings" })
 Player:CreateSection({ name = "Movement" })
 Player:CreateToggle({
     name = "Speed Boost",
-    description = "Overrides your walk speed.",
     value = false,
     flag = "syi_speed_on",
     callback = function(value)
@@ -891,7 +892,6 @@ Player:CreateToggle({
 })
 Player:CreateSlider({
     name = "Walk Speed",
-    description = "Speed used while Speed Boost is on.",
     range = { 16, 150 },
     increment = 1,
     value = 30,
@@ -904,7 +904,6 @@ Player:CreateSlider({
 })
 Player:CreateToggle({
     name = "Jump Boost",
-    description = "Overrides your jump power.",
     value = false,
     flag = "syi_jump_on",
     callback = function(value)
@@ -914,7 +913,6 @@ Player:CreateToggle({
 })
 Player:CreateSlider({
     name = "Jump Power",
-    description = "Jump power used while Jump Boost is on.",
     range = { 50, 300 },
     increment = 5,
     value = 100,
@@ -926,7 +924,6 @@ Player:CreateSlider({
 })
 Player:CreateToggle({
     name = "Infinite Jump",
-    description = "Jump again while airborne.",
     value = false,
     flag = "syi_infinite_jump",
     callback = function(value)
@@ -935,7 +932,6 @@ Player:CreateToggle({
 })
 Player:CreateToggle({
     name = "Unlimited Oxygen",
-    description = "Keeps your Breath attribute full.",
     value = false,
     flag = "syi_unlimited_oxygen",
     callback = function(value)
@@ -944,7 +940,6 @@ Player:CreateToggle({
 })
 Player:CreateToggle({
     name = "Unlimited Stamina",
-    description = "Keeps the Stamina attribute full and sprint on.",
     value = false,
     flag = "syi_unlimited_stamina",
     callback = function(value)
@@ -953,7 +948,6 @@ Player:CreateToggle({
 })
 Player:CreateToggle({
     name = "Force Sprint",
-    description = "Keeps the game's sprint state on.",
     value = false,
     flag = "syi_sprint",
     callback = function(value)
@@ -962,7 +956,6 @@ Player:CreateToggle({
 })
 Player:CreateToggle({
     name = "Anti-Ragdoll",
-    description = "Attempts to clear the ragdoll state after getting hit.",
     value = false,
     flag = "syi_anti_ragdoll",
     callback = function(value)
@@ -973,7 +966,6 @@ Player:CreateToggle({
 Visuals:CreateSection({ name = "ESP" })
 Visuals:CreateToggle({
     name = "Player ESP",
-    description = "Shows other players with health and distance.",
     value = false,
     flag = "syi_esp_player",
     callback = function(value)
@@ -982,7 +974,6 @@ Visuals:CreateToggle({
 })
 Visuals:CreateToggle({
     name = "Creature ESP",
-    description = "Highlights creatures and nextbots.",
     value = false,
     flag = "syi_esp_creature",
     callback = function(value)
@@ -991,7 +982,6 @@ Visuals:CreateToggle({
 })
 Visuals:CreateToggle({
     name = "Coin ESP",
-    description = "Highlights loose coins.",
     value = false,
     flag = "syi_esp_coin",
     callback = function(value)
@@ -1000,7 +990,6 @@ Visuals:CreateToggle({
 })
 Visuals:CreateToggle({
     name = "Item ESP",
-    description = "Highlights floating items and air drops.",
     value = false,
     flag = "syi_esp_item",
     callback = function(value)
@@ -1009,7 +998,6 @@ Visuals:CreateToggle({
 })
 Visuals:CreateToggle({
     name = "Disaster ESP",
-    description = "Highlights nearby hazards such as lava, waves, tornadoes and fire.",
     value = false,
     flag = "syi_esp_disaster",
     callback = function(value)
@@ -1018,7 +1006,6 @@ Visuals:CreateToggle({
 })
 Visuals:CreateToggle({
     name = "Boss ESP",
-    description = "Highlights objects tagged as boss health bars.",
     value = false,
     flag = "syi_esp_boss",
     callback = function(value)
@@ -1027,7 +1014,6 @@ Visuals:CreateToggle({
 })
 Visuals:CreateSlider({
     name = "ESP Distance",
-    description = "Maximum distance for ESP targets.",
     range = { 50, 2000 },
     increment = 50,
     value = 500,
@@ -1041,7 +1027,6 @@ Visuals:CreateSlider({
 Words:CreateSection({ name = "Manual Word" })
 Words:CreateInput({
     name = "Word",
-    description = "Enter a word to submit.",
     placeholder = "/god",
     value = "/god",
     callback = function(value)
@@ -1052,7 +1037,6 @@ Words:CreateInput({
 })
 Words:CreateButton({
     name = "Trigger Word",
-    description = "Sends the entered word to the game.",
     callback = function()
         local word = Settings.WriteWord
         if type(word) ~= "string" or word == "" then
@@ -1073,7 +1057,6 @@ Words:CreateText({
 Words:CreateSection({ name = "Auto Write" })
 Words:CreateToggle({
     name = "Auto Write",
-    description = "Submits the chosen word automatically.",
     value = false,
     flag = "syi_auto_write",
     callback = function(value)
@@ -1082,7 +1065,6 @@ Words:CreateToggle({
 })
 Words:CreateToggle({
     name = "Random Diary Word",
-    description = "Writes a random word from the diary word list.",
     value = false,
     flag = "syi_write_worst",
     callback = function(value)
@@ -1091,7 +1073,6 @@ Words:CreateToggle({
 })
 Words:CreateToggle({
     name = "Auto Mastery Fill",
-    description = "Cycles through the configured mastery words.",
     value = false,
     flag = "syi_auto_mastery",
     callback = function(value)
@@ -1104,7 +1085,6 @@ Words:CreateText({
 })
 Words:CreateButton({
     name = "Force All Mastery Pushes",
-    description = "Attempts the local diary push for the 10 configured mastery words.",
     callback = function()
         for _, word in ipairs(MASTERY_WORDS) do
             fireDiaryPush(word, MASTERY_CATEGORY[word] or "disasters", word, 2, false, true)
@@ -1114,14 +1094,12 @@ Words:CreateButton({
 })
 Words:CreateButton({
     name = "Force Writer Prompt",
-    description = "Attempts to fire the local writer prompt signal.",
     callback = function()
         fireWriterPrompt(19, 30, 1)
     end,
 })
 Words:CreateToggle({
     name = "Auto Writer Prompt",
-    description = "Attempts the writer prompt every 3 seconds.",
     value = false,
     flag = "syi_auto_prompt",
     callback = function(value)
@@ -1132,7 +1110,6 @@ Words:CreateToggle({
 Items:CreateSection({ name = "Item Roll" })
 Items:CreateToggle({
     name = "Auto Roll",
-    description = "Spins the item roll every 2 seconds.",
     value = false,
     flag = "syi_auto_roll",
     callback = function(value)
@@ -1143,7 +1120,6 @@ Items:CreateToggle({
 Farm:CreateSection({ name = "Money" })
 Farm:CreateToggle({
     name = "Coin Auto-Farm",
-    description = "Walks toward the nearest coin.",
     value = false,
     flag = "syi_coin_farm",
     callback = function(value)
@@ -1153,7 +1129,6 @@ Farm:CreateToggle({
 Farm:CreateSection({ name = "Items" })
 Farm:CreateToggle({
     name = "Auto Use Item",
-    description = "Uses the selected item every 2 seconds.",
     value = false,
     flag = "syi_auto_use_item",
     callback = function(value)
@@ -1162,7 +1137,6 @@ Farm:CreateToggle({
 })
 Farm:CreateDropdown({
     name = "Item to Use",
-    description = "Choose which item the auto-user selects.",
     options = itemNames,
     value = "None",
     flag = "syi_use_item",
@@ -1172,7 +1146,6 @@ Farm:CreateDropdown({
 })
 Farm:CreateToggle({
     name = "Auto Carry",
-    description = "Picks up the nearest carryable object.",
     value = false,
     flag = "syi_auto_carry",
     callback = function(value)
@@ -1182,7 +1155,6 @@ Farm:CreateToggle({
 Farm:CreateSection({ name = "Progress" })
 Farm:CreateToggle({
     name = "Auto Revive",
-    description = "Attempts the game's revive request after death.",
     value = false,
     flag = "syi_auto_revive",
     callback = function(value)
@@ -1191,7 +1163,6 @@ Farm:CreateToggle({
 })
 Farm:CreateToggle({
     name = "Diary Auto-Claim",
-    description = "Attempts to claim diary categories every 5 seconds.",
     value = false,
     flag = "syi_auto_diary",
     callback = function(value)
@@ -1202,7 +1173,6 @@ Farm:CreateToggle({
 Survival:CreateSection({ name = "Hazards" })
 Survival:CreateToggle({
     name = "Auto Struggle",
-    description = "Attempts to break free when grabbed.",
     value = false,
     flag = "syi_auto_struggle",
     callback = function(value)
@@ -1211,7 +1181,6 @@ Survival:CreateToggle({
 })
 Survival:CreateToggle({
     name = "Hazard Warnings",
-    description = "Logs nearby lava, waves, tornadoes and fire.",
     value = false,
     flag = "syi_hazard_warn",
     callback = function(value)
@@ -1220,7 +1189,6 @@ Survival:CreateToggle({
 })
 Survival:CreateToggle({
     name = "Auto Dodge",
-    description = "Moves away from nearby hazards.",
     value = false,
     flag = "syi_auto_dodge",
     callback = function(value)
@@ -1228,16 +1196,21 @@ Survival:CreateToggle({
     end,
 })
 
+System:CreateSection({ name = "Live Activity" })
+local liveActivity = System:CreateText({
+    name = "Live Activity",
+    text = "Status: Initializing\nActive features: 0\nUptime: 00:00:00",
+})
+
 System:CreateSection({ name = "Runtime" })
 System:CreateText({
-    name = "About",
-    text = "Standalone Rayfield Gen2 build. Use Stop Script to stop background loops and remove ESP objects.",
+    name = "Developer",
+    text = "VeloxHub  |  Surve Your Ideas  |  Author: Ovei",
 })
 
 local shutdown
 System:CreateButton({
     name = "Stop Script",
-    description = "Stops background loops, disconnects events and removes ESP objects.",
     callback = function()
         if shutdown then
             shutdown()
@@ -1248,6 +1221,40 @@ System:CreateButton({
 ---------------------------------------------------------------------
 -- Loops
 ---------------------------------------------------------------------
+
+local startedAt = os.clock()
+local activityKeys = {
+    "SpeedOn", "JumpOn", "InfiniteJump", "Sprint", "AntiRagdoll",
+    "EspPlayer", "EspCreature", "EspCoin", "EspItem", "EspDisaster", "EspBoss",
+    "AutoRoll", "CoinFarm", "AutoRevive", "AutoCarry", "AutoClaimDiary",
+    "AutoUseItem", "HazardWarn", "AutoDodge", "UnlimitedStamina",
+    "UnlimitedOxygen", "AutoStruggle", "AutoWriterPrompt", "AutoWrite",
+    "AutoWriteWorst", "AutoMastery",
+}
+
+task.spawn(function()
+    while running do
+        local active = {}
+        for _, key in ipairs(activityKeys) do
+            if Settings[key] then
+                table.insert(active, key)
+            end
+        end
+        local elapsed = math.floor(os.clock() - startedAt)
+        local hours = math.floor(elapsed / 3600)
+        local minutes = math.floor((elapsed % 3600) / 60)
+        local seconds = elapsed % 60
+        local status = #active > 0 and table.concat(active, ", ") or "Idle"
+        pcall(function()
+            liveActivity:Set(string.format(
+                "Status: %s\nActive features (%d): %s\nUptime: %02d:%02d:%02d",
+                #active > 0 and "Running" or "Ready", #active, status,
+                hours, minutes, seconds
+            ))
+        end)
+        task.wait(1)
+    end
+end)
 
 task.spawn(function()
 	while running do
@@ -1409,7 +1416,7 @@ shutdown = function()
         humanoid.PlatformStand = false
     end
 
-    logMessage("[SYI] script stopped and cleanup completed", "info")
+    logMessage("[VeloxHub] script stopped and cleanup completed", "info")
     pcall(function()
         window:Notify({
             title = "Script stopped",
@@ -1418,4 +1425,4 @@ shutdown = function()
     end)
 end
 
-logMessage("[SYI] Rayfield Gen2 interface loaded", "info")
+logMessage("[VeloxHub] Rayfield Gen2 interface loaded", "info")
